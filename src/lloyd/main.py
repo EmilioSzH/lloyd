@@ -294,6 +294,44 @@ def run(max_iterations: int, max_parallel: int, sequential: bool) -> None:
 
 
 @cli.command()
+@click.argument("idea")
+@click.option("--continue-session", "-c", help="Continue existing session by ID")
+def brainstorm(idea: str, continue_session: str | None) -> None:
+    """Start or continue a brainstorming session to refine ideas."""
+    from lloyd.brainstorm.session import BrainstormSession, BrainstormStore
+
+    store = BrainstormStore()
+
+    if continue_session:
+        session = store.get(continue_session)
+        if not session:
+            console.print(f"[red]Session {continue_session} not found.[/red]")
+            return
+        console.print(f"[cyan]Continuing session:[/cyan] {session.session_id}")
+    else:
+        session = BrainstormSession(initial_idea=idea)
+        store.save(session)
+        console.print(f"[green]Started brainstorm session:[/green] {session.session_id}")
+
+    console.print(f"\n[bold]Initial idea:[/bold] {session.initial_idea}")
+
+    if session.clarifications:
+        console.print("\n[bold]Clarifications so far:[/bold]")
+        for i, c in enumerate(session.clarifications, 1):
+            console.print(f"  Q{i}: {c['question']}")
+            console.print(f"  A{i}: {c['answer']}")
+
+    if session.spec:
+        console.print(f"\n[bold]Generated spec:[/bold]\n{session.spec}")
+    else:
+        console.print("\n[dim]To develop this idea, Lloyd would ask clarifying questions.[/dim]")
+        console.print("[dim]This feature integrates with the LLM/crew infrastructure.[/dim]")
+
+    console.print(f"\n[bold]Status:[/bold] {session.status}")
+    console.print(f"\nContinue with: [cyan]lloyd brainstorm \"\" --continue-session {session.session_id}[/cyan]")
+
+
+@cli.command()
 def metrics() -> None:
     """Show task execution metrics and statistics."""
     from lloyd.orchestrator.metrics import MetricsStore
