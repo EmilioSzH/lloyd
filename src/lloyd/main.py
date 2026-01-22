@@ -332,6 +332,39 @@ def brainstorm(idea: str, continue_session: str | None) -> None:
 
 
 @cli.command()
+@click.option("--category", "-c", help="Filter by category")
+@click.option("--limit", "-n", default=10, help="Number of entries to show")
+def knowledge(category: str | None, limit: int) -> None:
+    """View knowledge base entries."""
+    from lloyd.knowledge.store import KnowledgeStore
+
+    store = KnowledgeStore()
+    entries = store.query(category=category)[:limit]
+
+    if not entries:
+        console.print("[dim]Knowledge base is empty.[/dim]")
+        return
+
+    table = Table(title="Knowledge Base")
+    table.add_column("ID", style="cyan")
+    table.add_column("Category", style="white")
+    table.add_column("Conf", justify="right")
+    table.add_column("Freq", justify="right")
+    table.add_column("Title", style="white")
+
+    for e in entries:
+        table.add_row(
+            e.id,
+            e.category,
+            f"{e.confidence:.2f}",
+            str(e.frequency),
+            e.title[:40],
+        )
+
+    console.print(table)
+
+
+@cli.command()
 def metrics() -> None:
     """Show task execution metrics and statistics."""
     from lloyd.orchestrator.metrics import MetricsStore

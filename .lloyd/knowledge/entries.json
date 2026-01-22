@@ -1,0 +1,33 @@
+[
+  {
+    "id": "067cb237",
+    "category": "bug_pattern",
+    "title": "Import error after package rename",
+    "description": "Package was renamed, old import failed",
+    "context": "",
+    "confidence": 0.3,
+    "frequency": 1,
+    "last_applied": null,
+    "created_at": "2026-01-22T10:28:25.032586",
+    "tags": [
+      "import",
+      "package",
+      "python"
+    ]
+  },
+  {
+    "id": "f1dd3376",
+    "category": "fix_strategy",
+    "title": "Check dependencies first",
+    "description": "Always verify dependencies before debugging code",
+    "context": "",
+    "confidence": 0.3,
+    "frequency": 1,
+    "last_applied": null,
+    "created_at": "2026-01-22T10:28:25.032586",
+    "tags": [
+      "debugging",
+      "dependencies"
+    ]
+  }
+]
