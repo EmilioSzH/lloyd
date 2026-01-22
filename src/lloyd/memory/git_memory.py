@@ -224,3 +224,97 @@ class GitMemory:
         if result.returncode == 0:
             return result.stdout
         return None
+
+    def create_story_branch(self, story_id: str, base: str = "main") -> str | None:
+        """Create a branch for a story.
+
+        Args:
+            story_id: The story ID to use in branch name.
+            base: Base branch to branch from.
+
+        Returns:
+            Branch name if successful, None otherwise.
+        """
+        branch_name = f"lloyd/{story_id}"
+
+        # Try to checkout base first
+        base_result = self._run_git("checkout", base, check=False)
+        if base_result.returncode != 0:
+            # Base branch might not exist, try current branch
+            pass
+
+        # Create and checkout new branch
+        result = self._run_git("checkout", "-b", branch_name, check=False)
+        if result.returncode == 0:
+            return branch_name
+
+        # Branch might already exist, try to checkout
+        result = self._run_git("checkout", branch_name, check=False)
+        if result.returncode == 0:
+            return branch_name
+
+        return None
+
+    def create_pull_request(
+        self, title: str, body: str, draft: bool = False
+    ) -> str | None:
+        """Create a PR using gh CLI.
+
+        Args:
+            title: PR title.
+            body: PR body/description.
+            draft: Whether to create as draft.
+
+        Returns:
+            PR URL if successful, None otherwise.
+        """
+        try:
+            cmd = ["gh", "pr", "create", "--title", title, "--body", body]
+            if draft:
+                cmd.append("--draft")
+            result = subprocess.run(
+                cmd,
+                cwd=self.repo_path,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return result.stdout.strip()
+        except FileNotFoundError:
+            print("Warning: gh CLI not installed, skipping PR creation")
+            return None
+        except subprocess.CalledProcessError as e:
+            print(f"Warning: PR creation failed: {e.stderr}")
+            return None
+
+    def commit_all(self, message: str) -> bool:
+        """Stage and commit all changes.
+
+        Args:
+            message: Commit message.
+
+        Returns:
+            True if commit was created.
+        """
+        self._run_git("add", "-A", check=False)
+        result = self._run_git("commit", "-m", message, check=False)
+        return result.returncode == 0
+
+    def push(self, set_upstream: bool = False) -> bool:
+        """Push current branch to remote.
+
+        Args:
+            set_upstream: Whether to set upstream tracking.
+
+        Returns:
+            True if successful.
+        """
+        if set_upstream:
+            branch = self.get_current_branch()
+            if branch:
+                result = self._run_git("push", "-u", "origin", branch, check=False)
+            else:
+                return False
+        else:
+            result = self._run_git("push", check=False)
+        return result.returncode == 0

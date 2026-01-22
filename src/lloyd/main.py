@@ -47,9 +47,40 @@ def cli(ctx: click.Context) -> None:
 @click.option("--max-parallel", "-p", default=3, help="Maximum parallel workers")
 @click.option("--sequential", "-s", is_flag=True, help="Run in sequential mode (disable parallel)")
 @click.option("--dry-run", is_flag=True, help="Plan only, don't execute")
-def idea(description: str, max_iterations: int, max_parallel: int, sequential: bool, dry_run: bool) -> None:
+@click.option("--branch", "-b", is_flag=True, help="Create a git branch for this task")
+@click.option("--auto-pr", is_flag=True, help="Create PR when complete")
+@click.option("--draft-pr", is_flag=True, help="Create draft PR when complete")
+def idea(
+    description: str,
+    max_iterations: int,
+    max_parallel: int,
+    sequential: bool,
+    dry_run: bool,
+    branch: bool,
+    auto_pr: bool,
+    draft_pr: bool,
+) -> None:
     """Submit a new product idea for Lloyd to execute."""
+    import uuid
+
     console.print(f"[bold green]Received idea:[/bold green] {description}")
+
+    task_id = str(uuid.uuid4())[:8]
+    branch_name = None
+
+    # Create branch if requested
+    if branch:
+        from lloyd.memory.git_memory import GitMemory
+
+        git = GitMemory()
+        if not git.is_git_repo():
+            console.print("[yellow]Not a git repository. Skipping branch creation.[/yellow]")
+        else:
+            branch_name = git.create_story_branch(task_id)
+            if branch_name:
+                console.print(f"[cyan]Created branch:[/cyan] {branch_name}")
+            else:
+                console.print("[yellow]Failed to create branch.[/yellow]")
 
     if dry_run:
         console.print("[yellow]Dry run mode - planning only.[/yellow]")
@@ -73,6 +104,24 @@ def idea(description: str, max_iterations: int, max_parallel: int, sequential: b
         )
         console.print(f"\n[bold]Final status:[/bold] {state.status}")
         console.print(f"[bold]Iterations:[/bold] {state.iteration}")
+
+        # Create PR if requested and task completed
+        if (auto_pr or draft_pr) and state.status == "complete":
+            from lloyd.memory.git_memory import GitMemory
+
+            git = GitMemory()
+            if git.is_git_repo():
+                # Commit any remaining changes
+                if git.has_uncommitted_changes():
+                    git.commit_all(f"Lloyd: {description[:50]}")
+
+                pr_url = git.create_pull_request(
+                    title=f"Lloyd: {description[:50]}",
+                    body=f"Automated PR for task: {description}\n\nTask ID: {task_id}",
+                    draft=draft_pr,
+                )
+                if pr_url:
+                    console.print(f"[green]Created PR:[/green] {pr_url}")
 
 
 @cli.command()
