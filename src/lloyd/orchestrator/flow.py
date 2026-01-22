@@ -1,5 +1,6 @@
 """Main Lloyd orchestration flow."""
 
+import uuid
 from typing import Any
 
 from rich.console import Console
@@ -9,7 +10,10 @@ from lloyd.crews.planning import PlanningCrew
 from lloyd.crews.quality import QualityCrew
 from lloyd.memory.prd_manager import PRD, PRDManager, Story
 from lloyd.memory.progress import ProgressTracker
+from lloyd.orchestrator.complexity import ComplexityAssessor, TaskComplexity
+from lloyd.orchestrator.metrics import MetricsStore, TaskMetrics
 from lloyd.orchestrator.parallel_executor import ParallelStoryExecutor
+from lloyd.orchestrator.project_context import ProjectContext, ProjectDetector
 from lloyd.orchestrator.router import check_all_complete, get_next_story, get_ready_stories
 from lloyd.orchestrator.state import LloydState
 from lloyd.orchestrator.thread_safe_state import ThreadSafeStateManager
@@ -43,6 +47,13 @@ class LloydFlow:
         self.quality_crew = QualityCrew()
         self._prd: PRD | None = None
 
+        # New components for complexity routing
+        self.complexity_assessor = ComplexityAssessor()
+        self.project_detector = ProjectDetector()
+        self.metrics_store = MetricsStore()
+        self.project_context: ProjectContext | None = None
+        self.current_metrics: TaskMetrics | None = None
+
     @property
     def prd(self) -> PRD | None:
         """Get current PRD."""
@@ -61,6 +72,56 @@ class LloydFlow:
         self.state.status = "planning"
         self.progress.start_session(f"Working on: {idea[:100]}...")
 
+        # Detect project context
+        self.project_context = self.project_detector.detect()
+        console.print(f"[dim]Project: {self.project_context.language} ({', '.join(self.project_context.detected_from) or 'no markers'})[/dim]")
+
+        # Assess complexity
+        assessment = self.complexity_assessor.assess(idea)
+        self.state.complexity = assessment.complexity.value
+        console.print(f"[dim]Complexity: {assessment.complexity.value} - {assessment.reasoning}[/dim]")
+
+        # Start metrics tracking
+        self.current_metrics = TaskMetrics(
+            task_id=str(uuid.uuid4())[:8],
+            idea=idea,
+            complexity=assessment.complexity.value,
+        )
+
+    def create_trivial_prd(self) -> PRD:
+        """Create a simple PRD for trivial tasks (skips planning crew).
+
+        Returns:
+            Created PRD with a single story.
+        """
+        console.print("[green]TRIVIAL task - skipping planning crew[/green]")
+
+        # Create PRD directly without planning crew
+        prd = self.prd_manager.create_new(
+            project_name=f"Trivial: {self.state.idea[:40]}...",
+            description=self.state.idea,
+        )
+
+        # Add single story for trivial task
+        self.prd_manager.add_story(
+            prd,
+            title="Execute Task",
+            description=self.state.idea,
+            acceptance_criteria=["Task completed as requested"],
+            priority=1,
+        )
+
+        self._prd = prd
+        self.prd_manager.save(prd)
+
+        self.state.prd = prd.model_dump()
+        self.progress.append(f"Created trivial PRD (skipped planning)")
+
+        if self.current_metrics:
+            self.current_metrics.agents_used.append("direct_execution")
+
+        return prd
+
     def decompose_idea(self) -> PRD:
         """Decompose the idea into a structured PRD.
 
@@ -71,6 +132,9 @@ class LloydFlow:
 
         # Use planning crew to analyze and create PRD
         result = self.planning_crew.kickoff(inputs={"idea": self.state.idea})
+
+        if self.current_metrics:
+            self.current_metrics.agents_used.extend(["analyst", "researcher", "architect"])
 
         # Create PRD from planning result
         prd = self.prd_manager.create_from_planning(result)
@@ -382,9 +446,12 @@ class LloydFlow:
         else:
             console.print("[bold blue]Starting Lloyd workflow (sequential mode)...[/bold blue]")
 
-        # Phase 1: Planning
+        # Phase 1: Planning (skip for trivial tasks)
         if self.state.status == "planning" or not self.prd:
-            self.decompose_idea()
+            if self.state.complexity == TaskComplexity.TRIVIAL.value:
+                self.create_trivial_prd()
+            else:
+                self.decompose_idea()
 
         # Phase 2: Execution loop
         if use_parallel:
@@ -392,11 +459,21 @@ class LloydFlow:
         else:
             self._run_sequential_loop()
 
-        # Final status
+        # Final status and metrics
         if self.state.is_complete():
             console.print("[bold green]All tasks complete! Project finished.[/bold green]")
+            if self.current_metrics:
+                self.current_metrics.iterations = self.state.iteration
+                self.current_metrics.complete("success")
+                self.metrics_store.save(self.current_metrics)
+                console.print(f"[dim]Duration: {self.current_metrics.duration_human}[/dim]")
         elif self.state.is_blocked():
             console.print("[bold red]Workflow blocked. Manual intervention needed.[/bold red]")
+            if self.current_metrics:
+                self.current_metrics.iterations = self.state.iteration
+                self.current_metrics.complete("failure")
+                self.metrics_store.save(self.current_metrics)
+                console.print(f"[dim]Duration: {self.current_metrics.duration_human}[/dim]")
 
         return self.state
 

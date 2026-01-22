@@ -1,31 +1,15 @@
 {
-  "projectName": "Project: Build a simple Python CLI calculator that can add,...",
-  "description": "```\n# System Design Document for Python CLI Calculator\n\n## System Overview Diagram\n- [Python CLI Calculator]\n  - Component A (CLI Interface)\n  - Component B (Arithmetic Logic)\n  - Component C (Input/Output Handling)\n\n## Data Flow Diagrams\n**Diagram 1: Input Validation and Operation Execution**\n- User inputs two numbers along with the type of operation to perform via the CLI interface.\n- The Input/Output Handling component validates if the input is a number, handles non-numeric or division by zer",
+  "projectName": "New Project",
+  "description": "",
   "branchName": "main",
-  "createdAt": "2026-01-22T12:33:43.372110+00:00",
-  "updatedAt": "2026-01-22T12:38:38.438503+00:00",
+  "createdAt": "",
+  "updatedAt": "",
   "status": "idle",
-  "stories": [
-    {
-      "id": "story-001",
-      "title": "Initial Implementation",
-      "description": "Implement the core functionality for: Build a simple Python CLI calculator that can add, subtract, multiply, and divide two numbers",
-      "priority": 1,
-      "dependencies": [],
-      "acceptanceCriteria": [
-        "Core functionality works as described",
-        "Tests pass",
-        "Code follows project conventions"
-      ],
-      "passes": true,
-      "attempts": 1,
-      "lastAttemptAt": null,
-      "notes": "\nPassed on attempt 1"
-    }
-  ],
+  "stories": [],
   "metadata": {
-    "totalStories": 1,
-    "completedStories": 1,
+    "totalStories": 0,
+    "completedStories": 0,
+    "inProgressStories": 0,
     "currentStory": null,
     "estimatedIterations": 0,
     "actualIterations": 0

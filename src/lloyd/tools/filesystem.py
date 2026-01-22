@@ -1,8 +1,32 @@
-"""Filesystem tools for AEGIS agents."""
+"""Filesystem tools for Lloyd agents."""
 
 from pathlib import Path
 
 from crewai.tools import tool
+
+# Protected paths that Lloyd should never modify (its own source code)
+PROTECTED_PATHS = [
+    "src/lloyd",
+    "src\\lloyd",
+    "lloyd/src/lloyd",
+    "lloyd\\src\\lloyd",
+]
+
+
+def _is_protected_path(file_path: str) -> bool:
+    """Check if a path is within Lloyd's protected source directories.
+
+    Args:
+        file_path: Path to check.
+
+    Returns:
+        True if the path is protected and should not be modified.
+    """
+    path_str = str(Path(file_path).resolve()).replace("\\", "/").lower()
+    for protected in PROTECTED_PATHS:
+        if protected.replace("\\", "/").lower() in path_str:
+            return True
+    return False
 
 
 @tool("Read File")
@@ -40,6 +64,10 @@ def write_file(file_path: str, content: str) -> str:
     Returns:
         Success message or error description.
     """
+    # SAFETY: Prevent Lloyd from modifying its own source code
+    if _is_protected_path(file_path):
+        return f"Error: Cannot modify Lloyd's source files. Path '{file_path}' is protected."
+
     path = Path(file_path)
 
     try:
@@ -111,6 +139,10 @@ def delete_file(file_path: str) -> str:
     Returns:
         Success message or error description.
     """
+    # SAFETY: Prevent Lloyd from deleting its own source code
+    if _is_protected_path(file_path):
+        return f"Error: Cannot delete Lloyd's source files. Path '{file_path}' is protected."
+
     path = Path(file_path)
 
     if not path.exists():

@@ -33,7 +33,8 @@ def cli(ctx: click.Context) -> None:
                 "  [green]lloyd status[/green]       - Check current task queue\n"
                 "  [green]lloyd resume[/green]       - Resume from last checkpoint\n"
                 "  [green]lloyd init[/green]         - Initialize Lloyd in current directory\n"
-                "  [green]lloyd run[/green]          - Run the full workflow\n",
+                "  [green]lloyd run[/green]          - Run the full workflow\n"
+                "  [green]lloyd metrics[/green]      - Show execution metrics\n",
                 title="Welcome to Lloyd",
                 border_style="blue",
             )
@@ -241,6 +242,134 @@ def run(max_iterations: int, max_parallel: int, sequential: bool) -> None:
     state = flow.run(parallel=parallel)
 
     console.print(f"\n[bold]Final status:[/bold] {state.status}")
+
+
+@cli.command()
+def metrics() -> None:
+    """Show task execution metrics and statistics."""
+    from lloyd.orchestrator.metrics import MetricsStore
+
+    store = MetricsStore()
+    stats = store.get_stats()
+
+    if stats.get("total", 0) == 0:
+        console.print("[yellow]No metrics recorded yet. Run some tasks first.[/yellow]")
+        return
+
+    console.print("\n[bold]Task Execution Metrics[/bold]\n")
+
+    # Summary stats
+    console.print(f"Total tasks: {stats['total']}")
+    console.print(f"Successful: {stats['successful']} ({stats['success_rate']:.1f}%)")
+    console.print(f"Avg duration: {stats['avg_duration']:.1f}s")
+
+    # By complexity
+    by_complexity = stats.get("by_complexity", {})
+    if by_complexity:
+        console.print("\n[bold]By Complexity:[/bold]")
+        for complexity, data in by_complexity.items():
+            console.print(f"  {complexity}: {data['count']} tasks, avg {data['avg_duration']:.1f}s")
+
+    # Recent tasks
+    recent = store.get_recent(5)
+    if recent:
+        console.print("\n[bold]Recent Tasks:[/bold]")
+        table = Table()
+        table.add_column("ID", style="cyan")
+        table.add_column("Idea", style="white")
+        table.add_column("Complexity", justify="center")
+        table.add_column("Duration", justify="right")
+        table.add_column("Outcome", justify="center")
+
+        for task in reversed(recent):
+            outcome = task.get("outcome", "?")
+            outcome_style = "[green]" if outcome == "success" else "[red]"
+            table.add_row(
+                task.get("task_id", "?"),
+                task.get("idea", "?")[:35] + "..." if len(task.get("idea", "")) > 35 else task.get("idea", "?"),
+                task.get("complexity", "?"),
+                task.get("duration_human", "?"),
+                f"{outcome_style}{outcome}[/]",
+            )
+
+        console.print(table)
+
+
+@cli.command()
+@click.option("--all", "-a", "show_all", is_flag=True, help="Show all items including resolved")
+def inbox(show_all: bool) -> None:
+    """Show inbox items needing attention."""
+    from lloyd.inbox.store import InboxStore
+
+    store = InboxStore()
+    items = store.list_all() if show_all else store.list_unresolved()
+
+    if not items:
+        console.print("[dim]Inbox is empty.[/dim]")
+        return
+
+    table = Table(title="Inbox")
+    table.add_column("ID", style="cyan")
+    table.add_column("Type", style="white")
+    table.add_column("Priority", justify="center")
+    table.add_column("Title", style="white")
+    table.add_column("Status", justify="center")
+
+    for item in items:
+        status_str = "[green]resolved[/green]" if item.resolved else "[yellow]pending[/yellow]"
+        priority_style = {"high": "[red]", "normal": "[white]", "low": "[dim]"}.get(item.priority, "[white]")
+        table.add_row(
+            item.id,
+            item.type,
+            f"{priority_style}{item.priority}[/]",
+            item.title[:40],
+            status_str,
+        )
+
+    console.print(table)
+
+
+@cli.command("inbox-view")
+@click.argument("item_id")
+def inbox_view(item_id: str) -> None:
+    """View details of an inbox item."""
+    from lloyd.inbox.store import InboxStore
+
+    store = InboxStore()
+    item = store.get(item_id)
+
+    if not item:
+        console.print(f"[red]Item {item_id} not found.[/red]")
+        return
+
+    console.print(f"\n[bold]ID:[/bold] {item.id}")
+    console.print(f"[bold]Type:[/bold] {item.type}")
+    console.print(f"[bold]Title:[/bold] {item.title}")
+    console.print(f"[bold]Priority:[/bold] {item.priority}")
+    console.print(f"[bold]Created:[/bold] {item.created_at}")
+    console.print(f"[bold]Project:[/bold] {item.project_id}")
+    console.print(f"[bold]Resolved:[/bold] {item.resolved}")
+    if item.resolved:
+        console.print(f"[bold]Resolution:[/bold] {item.resolution}")
+        console.print(f"[bold]Resolved at:[/bold] {item.resolved_at}")
+    console.print(f"\n[bold]Context:[/bold] {json.dumps(item.context, indent=2)}")
+    console.print(f"\n[bold]Available actions:[/bold] {', '.join(item.actions) if item.actions else 'none'}")
+
+
+@cli.command("inbox-resolve")
+@click.argument("item_id")
+@click.argument("action")
+def inbox_resolve(item_id: str, action: str) -> None:
+    """Resolve an inbox item with an action."""
+    from lloyd.inbox.store import InboxStore
+
+    store = InboxStore()
+    item = store.resolve(item_id, action)
+
+    if item:
+        console.print(f"[green]Resolved {item_id} with action: {action}[/green]")
+    else:
+        console.print(f"[red]Item {item_id} not found.[/red]")
 
 
 @cli.command()

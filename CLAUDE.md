@@ -85,6 +85,21 @@ uv build                       # Build package
 - Ignore type errors
 - Leave print statements in production code
 - Create files outside the project directory
+- **Modify Lloyd's own source files** (anything in src/lloyd/) - this causes self-destruction
+
+## Safe Test Commands
+
+When testing Lloyd, use these safe ideas that don't modify Lloyd itself:
+
+```bash
+# Safe trivial task test
+lloyd idea "Create a file called test_output.txt with the text 'Hello from Lloyd'"
+
+# Safe simple task test
+lloyd idea "Create a Python script called hello.py that prints Hello World"
+```
+
+**NEVER test with ideas that modify src/lloyd/ files!**
 
 ## Agent Behavior Guidelines
 

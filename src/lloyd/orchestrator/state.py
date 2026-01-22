@@ -17,6 +17,7 @@ class LloydState(BaseModel):
     max_parallel: int = 3
     status: str = "idle"  # idle, planning, executing, testing, complete, blocked
     parallel_mode: bool = True
+    complexity: str = "moderate"  # trivial, simple, moderate, complex
 
     class Config:
         """Pydantic configuration."""

@@ -95,6 +95,8 @@ class ProgressTracker:
         Args:
             description: Optional session description.
         """
+        self.progress_path.parent.mkdir(parents=True, exist_ok=True)
+
         date = datetime.now(UTC).strftime("%Y-%m-%d")
         header = f"\n\n## Session: {date}"
         if description:
