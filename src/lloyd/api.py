@@ -14,6 +14,10 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from lloyd import __version__
+from lloyd.inbox.store import InboxStore
+from lloyd.inbox.models import InboxItem
+from lloyd.brainstorm.session import BrainstormSession, BrainstormStore
+from lloyd.knowledge.store import KnowledgeStore
 
 # Frontend path
 FRONTEND_DIR = Path(__file__).parent / "frontend" / "dist"
@@ -337,6 +341,152 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+
+# ============== Inbox API ==============
+
+@app.get("/api/inbox")
+async def get_inbox(show_resolved: bool = False) -> list[dict[str, Any]]:
+    """Get inbox items."""
+    store = InboxStore()
+    if show_resolved:
+        items = store.list_all()
+    else:
+        items = store.list_unresolved()
+    return [item.to_dict() for item in items]
+
+
+@app.get("/api/inbox/{item_id}")
+async def get_inbox_item(item_id: str) -> dict[str, Any]:
+    """Get a specific inbox item."""
+    store = InboxStore()
+    item = store.get(item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail=f"Inbox item not found: {item_id}")
+    return item.to_dict()
+
+
+class ResolveRequest(BaseModel):
+    action: str
+
+
+@app.post("/api/inbox/{item_id}/resolve")
+async def resolve_inbox_item(item_id: str, request: ResolveRequest) -> dict[str, str]:
+    """Resolve an inbox item."""
+    store = InboxStore()
+    item = store.resolve(item_id, request.action)
+    if not item:
+        raise HTTPException(status_code=404, detail=f"Inbox item not found: {item_id}")
+    return {"message": f"Resolved item {item_id} with action: {request.action}"}
+
+
+@app.delete("/api/inbox/{item_id}")
+async def delete_inbox_item(item_id: str) -> dict[str, str]:
+    """Delete an inbox item."""
+    store = InboxStore()
+    if not store.delete(item_id):
+        raise HTTPException(status_code=404, detail=f"Inbox item not found: {item_id}")
+    return {"message": f"Deleted inbox item: {item_id}"}
+
+
+# ============== Brainstorm API ==============
+
+@app.get("/api/brainstorm")
+async def get_brainstorm_sessions() -> list[dict[str, Any]]:
+    """Get all brainstorm sessions."""
+    store = BrainstormStore()
+    sessions = store.list_all()
+    return [s.to_dict() for s in sessions]
+
+
+@app.get("/api/brainstorm/{session_id}")
+async def get_brainstorm_session(session_id: str) -> dict[str, Any]:
+    """Get a specific brainstorm session."""
+    store = BrainstormStore()
+    session = store.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    return session.to_dict()
+
+
+class BrainstormRequest(BaseModel):
+    idea: str
+
+
+@app.post("/api/brainstorm")
+async def create_brainstorm_session(request: BrainstormRequest) -> dict[str, Any]:
+    """Create a new brainstorm session."""
+    store = BrainstormStore()
+    session = BrainstormSession(initial_idea=request.idea)
+    store.save(session)
+    return session.to_dict()
+
+
+class ClarificationRequest(BaseModel):
+    question: str
+    answer: str
+
+
+@app.post("/api/brainstorm/{session_id}/clarify")
+async def add_clarification(session_id: str, request: ClarificationRequest) -> dict[str, Any]:
+    """Add a clarification to a brainstorm session."""
+    store = BrainstormStore()
+    session = store.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    session.add_clarification(request.question, request.answer)
+    store.save(session)
+    return session.to_dict()
+
+
+@app.post("/api/brainstorm/{session_id}/approve")
+async def approve_brainstorm_session(session_id: str) -> dict[str, str]:
+    """Approve a brainstorm session spec."""
+    store = BrainstormStore()
+    session = store.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    session.approve()
+    store.save(session)
+    return {"message": f"Approved session: {session_id}"}
+
+
+@app.delete("/api/brainstorm/{session_id}")
+async def delete_brainstorm_session(session_id: str) -> dict[str, str]:
+    """Delete a brainstorm session."""
+    store = BrainstormStore()
+    if not store.delete(session_id):
+        raise HTTPException(status_code=404, detail=f"Session not found: {session_id}")
+    return {"message": f"Deleted session: {session_id}"}
+
+
+# ============== Knowledge API ==============
+
+@app.get("/api/knowledge")
+async def get_knowledge(category: str | None = None, min_confidence: float = 0.0) -> list[dict[str, Any]]:
+    """Get knowledge entries."""
+    store = KnowledgeStore()
+    entries = store.query(category=category, min_confidence=min_confidence)
+    return [e.to_dict() for e in entries]
+
+
+@app.get("/api/knowledge/{entry_id}")
+async def get_knowledge_entry(entry_id: str) -> dict[str, Any]:
+    """Get a specific knowledge entry."""
+    store = KnowledgeStore()
+    entry = store.get(entry_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Entry not found: {entry_id}")
+    return entry.to_dict()
+
+
+@app.delete("/api/knowledge/{entry_id}")
+async def delete_knowledge_entry(entry_id: str) -> dict[str, str]:
+    """Delete a knowledge entry."""
+    store = KnowledgeStore()
+    if not store.delete(entry_id):
+        raise HTTPException(status_code=404, detail=f"Entry not found: {entry_id}")
+    return {"message": f"Deleted entry: {entry_id}"}
 
 
 # Serve frontend for all non-API routes (SPA catch-all)

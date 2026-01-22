@@ -6,11 +6,14 @@ import { TaskQueue } from './components/TaskQueue'
 import { ProgressLog } from './components/ProgressLog'
 import { Settings } from './components/Settings'
 import { HowToUse } from './components/HowToUse'
+import { Inbox } from './components/Inbox'
+import { Brainstorm } from './components/Brainstorm'
+import { Knowledge } from './components/Knowledge'
 import { ThemeProvider } from './components/ThemeProvider'
 import { useWebSocket } from './hooks/useWebSocket'
 import { StatusResponse, ProgressResponse } from './types'
 
-type View = 'dashboard' | 'idea' | 'tasks' | 'progress' | 'settings' | 'guide'
+type View = 'dashboard' | 'idea' | 'tasks' | 'progress' | 'settings' | 'guide' | 'inbox' | 'brainstorm' | 'knowledge'
 
 function AppContent() {
   const [view, setView] = useState<View>('dashboard')
@@ -97,6 +100,12 @@ function AppContent() {
         return <Settings onInit={refreshData} />
       case 'guide':
         return <HowToUse />
+      case 'inbox':
+        return <Inbox />
+      case 'brainstorm':
+        return <Brainstorm />
+      case 'knowledge':
+        return <Knowledge />
       default:
         return <Dashboard status={status} progress={progress} onRefresh={refreshData} lastMessage={lastMessage} isConnected={isConnected} />
     }

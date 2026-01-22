@@ -5,10 +5,13 @@ import {
   ScrollText,
   Settings as SettingsIcon,
   HelpCircle,
+  Inbox,
+  Sparkles,
+  BookOpen,
 } from 'lucide-react'
 import { ThemeSelector } from './ThemeSelector'
 
-type View = 'dashboard' | 'idea' | 'tasks' | 'progress' | 'settings' | 'guide'
+type View = 'dashboard' | 'idea' | 'tasks' | 'progress' | 'settings' | 'guide' | 'inbox' | 'brainstorm' | 'knowledge'
 
 interface SidebarProps {
   currentView: View
@@ -19,8 +22,11 @@ interface SidebarProps {
 const navItems = [
   { id: 'dashboard' as View, label: 'Dashboard', icon: LayoutDashboard },
   { id: 'idea' as View, label: 'New Idea', icon: Lightbulb },
+  { id: 'inbox' as View, label: 'Inbox', icon: Inbox },
+  { id: 'brainstorm' as View, label: 'Brainstorm', icon: Sparkles },
   { id: 'tasks' as View, label: 'Tasks', icon: ListTodo },
   { id: 'progress' as View, label: 'Progress', icon: ScrollText },
+  { id: 'knowledge' as View, label: 'Knowledge', icon: BookOpen },
   { id: 'settings' as View, label: 'Settings', icon: SettingsIcon },
   { id: 'guide' as View, label: 'How to Use', icon: HelpCircle },
 ]
