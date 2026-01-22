@@ -1,0 +1,34 @@
+{
+  "projectName": "{{project_name}}",
+  "description": "{{description}}",
+  "branchName": "{{branch_name}}",
+  "createdAt": "{{created_at}}",
+  "updatedAt": "{{updated_at}}",
+  "status": "idle",
+
+  "stories": [
+    {
+      "id": "story-001",
+      "title": "{{first_story_title}}",
+      "description": "{{first_story_description}}",
+      "priority": 1,
+      "dependencies": [],
+      "acceptanceCriteria": [
+        "{{acceptance_criterion_1}}",
+        "{{acceptance_criterion_2}}"
+      ],
+      "passes": false,
+      "attempts": 0,
+      "lastAttemptAt": null,
+      "notes": ""
+    }
+  ],
+
+  "metadata": {
+    "totalStories": 1,
+    "completedStories": 0,
+    "currentStory": null,
+    "estimatedIterations": 10,
+    "actualIterations": 0
+  }
+}

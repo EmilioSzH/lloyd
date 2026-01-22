@@ -1,0 +1,68 @@
+run_tests:
+  description: >
+    Run tests and verify the implementation:
+
+    Story: {story_title}
+    Acceptance Criteria:
+    {acceptance_criteria}
+
+    Execution Result:
+    {execution_result}
+
+    Steps:
+    1. Run existing tests to ensure nothing is broken
+    2. Write new tests for the implementation
+    3. Verify all acceptance criteria are met
+    4. Report any failures or issues
+  expected_output: >
+    Test report including:
+    - Test results (pass/fail)
+    - Coverage information
+    - List of acceptance criteria met/unmet
+    - Any issues found
+  agent: tester
+
+review_code:
+  description: >
+    Review the code changes for: {story_title}
+
+    Look for:
+    1. Code correctness
+    2. Security vulnerabilities
+    3. Performance issues
+    4. Code style and conventions
+    5. Proper error handling
+    6. Documentation completeness
+  expected_output: >
+    Code review including:
+    - Overall assessment (approve/request changes)
+    - Specific issues found
+    - Suggestions for improvement
+    - Security concerns if any
+  agent: reviewer
+  context:
+    - run_tests
+
+verify_acceptance:
+  description: >
+    Verify all acceptance criteria are met:
+
+    Story: {story_title}
+
+    Acceptance Criteria:
+    {acceptance_criteria}
+
+    Test Results: {test_results}
+    Review Results: {review_results}
+
+    Make a final determination on whether the story passes.
+  expected_output: >
+    Verification result including:
+    - passes: true/false
+    - Criteria checklist with status
+    - Summary of any remaining issues
+    - Recommendations for next steps
+  agent: tester
+  context:
+    - run_tests
+    - review_code

@@ -1,0 +1,73 @@
+# Lloyd Progress Log
+
+## Session: 2026-01-21
+
+### Phase 1: Foundation - COMPLETE
+- Created project directory structure matching spec
+- Set up pyproject.toml with all dependencies (crewai, composio, e2b, etc.)
+- Created CLAUDE.md configuration file
+- Initialized .lloyd/ directory with prd.json and progress.txt
+- Created CLI entry point with commands: idea, status, resume, init
+- All tests passing (4/4)
+- All linting checks passing (ruff)
+
+### Phase 2: Core Implementation - COMPLETE
+- Implemented BaseAgent class with CrewAI integration
+- Created all specialized agents (Analyst, Architect, Researcher, Coder, Tester, Reviewer, Writer)
+- Implemented all crews with YAML config (Planning, Execution, Quality)
+- Created comprehensive tool suite (filesystem, shell, code_exec, github, web_search)
+- Implemented PRDManager for task queue management
+- Implemented ProgressTracker for learnings persistence
+- Implemented GitMemory for version control integration
+- Created LloydFlow orchestrator with full workflow
+- Enhanced CLI with all commands (idea, status, resume, run, init, reset-story)
+- All 33 tests passing
+- All linting checks passing
+
+### Phase 3: Rename from AEGIS to Lloyd - COMPLETE
+- Renamed aegis/ directory to lloyd/
+- Renamed src/aegis/ to src/lloyd/
+- Renamed .aegis/ to .lloyd/
+- Updated pyproject.toml with new package name
+- Updated all Python imports from aegis to lloyd
+- Renamed AEGISFlow to LloydFlow, AEGISState to LloydState
+- Renamed run_aegis to run_lloyd
+- Updated all documentation (CLAUDE.md, README.md)
+- Updated all tests to use new names
+- All 33 tests passing
+
+### Phase 4: Web GUI - COMPLETE
+- Added FastAPI backend (api.py) with REST endpoints
+- Created WebSocket support for real-time updates
+- Built React frontend with Vite and TypeScript
+- Implemented Tailwind CSS styling with custom lloyd color theme
+- Created components: Sidebar, Dashboard, IdeaForm, TaskQueue, ProgressLog, Settings
+- Added WebSocket hook for live updates during execution
+- Frontend built and bundled in src/lloyd/frontend/dist/
+- Added lloyd-server command to start the GUI
+- All API endpoints tested and working
+- GUI accessible at http://localhost:8000
+
+## Learnings
+- uv was not available on this system, used pip install -e . instead
+- Used Python 3.12 union syntax (str | None) instead of Optional[str]
+- datetime.UTC is preferred over timezone.utc in Python 3.11+
+- CrewAI requires API keys (ANTHROPIC_API_KEY or OPENAI_API_KEY) for execution
+- Tests that invoke CrewAI need to be isolated or mocked
+
+
+## Session: 2026-01-22
+Working on: Build a simple Python CLI calculator that can add, subtract, multiply, and divide two numbers...
+
+
+## Session: 2026-01-22
+Working on: Build a simple Python CLI calculator that can add, subtract, multiply, and divide two numbers...
+
+
+## Session: 2026-01-22
+Working on: Build a simple Python CLI calculator that can add, subtract, multiply, and divide two numbers...
+
+- [2026-01-22 12:33:43 UTC] Created PRD with 1 stories
+- [2026-01-22 12:35:24 UTC] Executed: Initial Implementation
+### Iteration 1
+- [2026-01-22 12:38:38 UTC] Iteration 1 - Task: Initial Implementation - Status: PASSED

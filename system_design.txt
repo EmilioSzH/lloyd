@@ -1,0 +1,52 @@
+# System Overview Diagram
+- [Python CLI Calculator]
+  - Component A (CLI Interface)
+  - Component B (Arithmetic Logic)
+  - Component C (Input/Output Handling)
+
+# Data Flow Diagrams
+**Diagram 1: Input Validation and Operation Execution**
+- User inputs two numbers along with the type of operation to perform via the CLI interface.
+- The Input/Output Handling component validates if the input is a number, handles non-numeric or division by zero errors gracefully.
+- Once validated, the Arithmetic Logic receives the clean data and performs the requested arithmetic operation.
+
+**Diagram 2: Result Presentation**
+- After performing an arithmetic operation, the result (or error message) travels back through Input/Output Handling to be formatted for output display.
+- The CLI Interface then presents this information to the user in a clear format.
+
+# Component Descriptions
+## Component A: CLI Interface
+- Description: Manages the command-line interface for user interaction.
+- Responsibilities: Accepts input via the command line, provides usage instructions and feedback to users.
+- Tools/Libraries Used: argparse
+
+## Component B: Arithmetic Logic
+- Description: Handles the arithmetic operations such as addition, subtraction, multiplication, and division.
+- Responsibilities: Executes mathematical calculations based on user inputs and passes results back through the CLI interface.
+- Tools/Libraries Used: Built-in math module or custom implementation for specific error handling
+
+## Component C: Input/Output Handling
+- Description: Ensures proper formatting of input data and output presentation, manages exceptions.
+- Responsibilities: Validates numerical input, manages error handling for edge cases (e.g., division by zero), formats the display of results to the user.
+- Tools/Libraries Used: None specific, but relies on Python's built-in capabilities for input validation and exception handling
+
+# Data Models
+- Data Model A (OperationInput)
+  - Fields:
+    - operation_type (string): Type of arithmetic operation (addition, subtraction, multiplication, division)
+    - operand1 (float): First number
+    - operand2 (float): Second number
+
+- Data Model B (CalculationResult)
+  - Fields:
+    - result_value (float): Result of the arithmetic operation or None if an error occurred.
+    - error_message (string): Error message if an error occurred during calculation, null otherwise.
+
+# API Specifications
+There are no APIs involved for this command-line application as it does not interface with external services.
+
+# Implementation Roadmap
+1. Develop CLI Interface using argparse library
+2. Implement Arithmetic Logic to perform basic operations with proper error handling.
+3. Create Input/Output Handling component to ensure correct data flow and formatting.
+4. Test each component independently for correctness before integration testing.

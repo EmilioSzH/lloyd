@@ -53,3 +53,10 @@ Thumbs.db
 
 # Lock files for parallel execution
 *.lock
+
+# Node
+node_modules/
+npm-debug.log*
+
+# uv
+uv.lock

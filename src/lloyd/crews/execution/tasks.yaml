@@ -1,0 +1,66 @@
+implement_story:
+  description: >
+    Implement the following story:
+
+    Title: {story_title}
+    Description: {story_description}
+
+    Acceptance Criteria:
+    {acceptance_criteria}
+
+    Context from PRD:
+    {prd_context}
+
+    Previous learnings:
+    {progress_context}
+
+    Requirements:
+    1. Write clean, well-documented code
+    2. Follow existing code patterns in the codebase
+    3. Include type hints for all functions
+    4. Handle errors gracefully
+  expected_output: >
+    Working code implementation that:
+    - Meets all acceptance criteria
+    - Includes comprehensive error handling
+    - Is well-documented
+    - Follows project conventions
+  agent: coder
+
+setup_infrastructure:
+  description: >
+    Set up infrastructure for: {story_title}
+
+    Requirements:
+    1. Configure necessary dependencies
+    2. Set up any required environment variables
+    3. Create configuration files if needed
+    4. Ensure the development environment is ready
+  expected_output: >
+    Infrastructure setup including:
+    - Updated dependency files
+    - Configuration files
+    - Environment setup instructions
+  agent: devops
+
+integrate_components:
+  description: >
+    Integrate the implementation with existing systems:
+
+    Story: {story_title}
+    Implementation details: {implementation_details}
+
+    Requirements:
+    1. Ensure proper API connections
+    2. Handle authentication/authorization
+    3. Implement proper error handling
+    4. Add logging for debugging
+  expected_output: >
+    Integration that:
+    - Connects all components
+    - Handles errors gracefully
+    - Includes comprehensive logging
+    - Is properly documented
+  agent: integrator
+  context:
+    - implement_story

@@ -1,0 +1,59 @@
+analyze_idea:
+  description: >
+    Analyze the product idea: {idea}
+
+    Break down the idea into:
+    1. Core problem being solved
+    2. Target users
+    3. Key features required
+    4. Potential edge cases
+    5. Success criteria
+
+    Ask clarifying questions if the idea is ambiguous.
+  expected_output: >
+    A structured analysis including:
+    - Problem statement
+    - User personas
+    - Feature list with priorities
+    - Edge cases to consider
+    - Clear acceptance criteria for each feature
+  agent: analyst
+
+research_solutions:
+  description: >
+    Research existing solutions and best practices for: {idea}
+
+    Look for:
+    1. Similar existing products/libraries
+    2. Common implementation patterns
+    3. Potential pitfalls and how others solved them
+    4. Recommended technologies and frameworks
+  expected_output: >
+    A research report including:
+    - Existing solutions comparison
+    - Recommended tech stack with rationale
+    - Common pitfalls to avoid
+    - Best practices to follow
+  agent: researcher
+
+design_architecture:
+  description: >
+    Design the system architecture for: {idea}
+
+    Based on the analysis and research, create:
+    1. High-level system design
+    2. Component breakdown
+    3. Data flow diagrams
+    4. API contracts (if applicable)
+    5. File/module structure
+  expected_output: >
+    An architecture document including:
+    - System overview diagram
+    - Component descriptions
+    - Data models
+    - API specifications
+    - Implementation roadmap
+  agent: architect
+  context:
+    - analyze_idea
+    - research_solutions
