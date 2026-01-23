@@ -14,10 +14,12 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from lloyd import __version__
-from lloyd.inbox.store import InboxStore
-from lloyd.inbox.models import InboxItem
 from lloyd.brainstorm.session import BrainstormSession, BrainstormStore
+from lloyd.extensions.manager import ExtensionManager
+from lloyd.extensions.scaffold import create_extension_scaffold
+from lloyd.inbox.store import InboxStore
 from lloyd.knowledge.store import KnowledgeStore
+from lloyd.selfmod.queue import SelfModQueue
 
 # Frontend path
 FRONTEND_DIR = Path(__file__).parent / "frontend" / "dist"
@@ -182,16 +184,20 @@ async def run_workflow_async(flow: Any, max_iterations: int, parallel: bool = Tr
         # Planning phase
         await manager.broadcast({"type": "phase", "phase": "planning"})
         flow.decompose_idea()
-        await manager.broadcast({"type": "prd_created", "stories": len(flow.prd.stories) if flow.prd else 0})
+        await manager.broadcast(
+            {"type": "prd_created", "stories": len(flow.prd.stories) if flow.prd else 0}
+        )
 
         # Execution loop
         while flow.state.can_continue():
-            await manager.broadcast({
-                "type": "iteration",
-                "iteration": flow.state.iteration + 1,
-                "status": flow.state.status,
-                "parallel": parallel,
-            })
+            await manager.broadcast(
+                {
+                    "type": "iteration",
+                    "iteration": flow.state.iteration + 1,
+                    "status": flow.state.status,
+                    "parallel": parallel,
+                }
+            )
 
             if parallel:
                 should_continue = flow.run_parallel_iteration()
@@ -203,13 +209,17 @@ async def run_workflow_async(flow: Any, max_iterations: int, parallel: bool = Tr
             if prd_path.exists():
                 with open(prd_path) as f:
                     prd = json.load(f)
-                in_progress = sum(1 for s in prd.get("stories", []) if s.get("status") == "in_progress")
-                await manager.broadcast({
-                    "type": "status_update",
-                    "stories": prd.get("stories", []),
-                    "iteration": flow.state.iteration,
-                    "in_progress": in_progress,
-                })
+                in_progress = sum(
+                    1 for s in prd.get("stories", []) if s.get("status") == "in_progress"
+                )
+                await manager.broadcast(
+                    {
+                        "type": "status_update",
+                        "stories": prd.get("stories", []),
+                        "iteration": flow.state.iteration,
+                        "in_progress": in_progress,
+                    }
+                )
 
             if not should_continue:
                 break
@@ -218,17 +228,21 @@ async def run_workflow_async(flow: Any, max_iterations: int, parallel: bool = Tr
             await asyncio.sleep(0.1)
 
         # Final status
-        await manager.broadcast({
-            "type": "complete",
-            "status": flow.state.status,
-            "iterations": flow.state.iteration,
-        })
+        await manager.broadcast(
+            {
+                "type": "complete",
+                "status": flow.state.status,
+                "iterations": flow.state.iteration,
+            }
+        )
 
     except Exception as e:
-        await manager.broadcast({
-            "type": "error",
-            "message": str(e),
-        })
+        await manager.broadcast(
+            {
+                "type": "error",
+                "message": str(e),
+            }
+        )
 
 
 @app.post("/api/init")
@@ -345,6 +359,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 # ============== Inbox API ==============
 
+
 @app.get("/api/inbox")
 async def get_inbox(show_resolved: bool = False) -> list[dict[str, Any]]:
     """Get inbox items."""
@@ -390,6 +405,7 @@ async def delete_inbox_item(item_id: str) -> dict[str, str]:
 
 
 # ============== Brainstorm API ==============
+
 
 @app.get("/api/brainstorm")
 async def get_brainstorm_sessions() -> list[dict[str, Any]]:
@@ -462,8 +478,11 @@ async def delete_brainstorm_session(session_id: str) -> dict[str, str]:
 
 # ============== Knowledge API ==============
 
+
 @app.get("/api/knowledge")
-async def get_knowledge(category: str | None = None, min_confidence: float = 0.0) -> list[dict[str, Any]]:
+async def get_knowledge(
+    category: str | None = None, min_confidence: float = 0.0
+) -> list[dict[str, Any]]:
     """Get knowledge entries."""
     store = KnowledgeStore()
     entries = store.query(category=category, min_confidence=min_confidence)
@@ -487,6 +506,166 @@ async def delete_knowledge_entry(entry_id: str) -> dict[str, str]:
     if not store.delete(entry_id):
         raise HTTPException(status_code=404, detail=f"Entry not found: {entry_id}")
     return {"message": f"Deleted entry: {entry_id}"}
+
+
+# ============== Self-Modification API ==============
+
+
+@app.get("/api/selfmod/queue")
+async def get_selfmod_queue() -> list[dict[str, Any]]:
+    """Get all self-modification tasks."""
+    queue = SelfModQueue()
+    return [
+        {
+            "task_id": t.task_id,
+            "description": t.description,
+            "risk_level": t.risk_level,
+            "status": t.status,
+            "clone_path": t.clone_path,
+            "created_at": t.created_at,
+            "test_results": t.test_results,
+            "error_message": t.error_message,
+        }
+        for t in queue.list_all()
+    ]
+
+
+@app.get("/api/selfmod/{task_id}")
+async def get_selfmod_task(task_id: str) -> dict[str, Any]:
+    """Get a specific self-modification task."""
+    queue = SelfModQueue()
+    task = queue.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+    return {
+        "task_id": task.task_id,
+        "description": task.description,
+        "risk_level": task.risk_level,
+        "status": task.status,
+        "clone_path": task.clone_path,
+        "created_at": task.created_at,
+        "test_results": task.test_results,
+        "error_message": task.error_message,
+    }
+
+
+@app.post("/api/selfmod/{task_id}/approve")
+async def approve_selfmod_task(task_id: str) -> dict[str, str]:
+    """Approve and merge a self-modification task."""
+    from lloyd.selfmod.clone_manager import LloydCloneManager
+
+    queue = SelfModQueue()
+    task = queue.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+
+    if task.status not in ("awaiting_approval", "awaiting_gpu"):
+        raise HTTPException(status_code=400, detail=f"Task not awaiting approval: {task.status}")
+
+    # Merge the changes
+    clone_mgr = LloydCloneManager()
+    if clone_mgr.merge_clone(task_id):
+        task.status = "merged"
+        queue.update(task)
+        clone_mgr.cleanup_clone(task_id)
+        return {"message": f"Approved and merged task: {task_id}"}
+    else:
+        task.status = "failed"
+        task.error_message = "Merge failed"
+        queue.update(task)
+        raise HTTPException(status_code=500, detail="Merge failed")
+
+
+@app.post("/api/selfmod/{task_id}/reject")
+async def reject_selfmod_task(task_id: str) -> dict[str, str]:
+    """Reject a self-modification task."""
+    from lloyd.selfmod.clone_manager import LloydCloneManager
+
+    queue = SelfModQueue()
+    task = queue.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
+
+    task.status = "rejected"
+    queue.update(task)
+
+    # Clean up the clone
+    clone_mgr = LloydCloneManager()
+    clone_mgr.cleanup_clone(task_id)
+
+    return {"message": f"Rejected task: {task_id}"}
+
+
+# ============== Extensions API ==============
+
+
+@app.get("/api/extensions")
+async def get_extensions() -> list[dict[str, Any]]:
+    """Get all extensions."""
+    manager = ExtensionManager()
+    extensions = manager.discover()
+    return [
+        {
+            "name": ext.name,
+            "display_name": ext.display_name,
+            "version": ext.version,
+            "description": ext.description,
+            "path": str(ext.path),
+            "enabled": ext.enabled,
+            "error": ext.error,
+            "has_tool": ext.tool_instance is not None,
+        }
+        for ext in extensions
+    ]
+
+
+class CreateExtensionRequest(BaseModel):
+    name: str
+    description: str = ""
+
+
+@app.post("/api/extensions")
+async def create_extension(request: CreateExtensionRequest) -> dict[str, Any]:
+    """Create a new extension scaffold."""
+    try:
+        ext_path = create_extension_scaffold(request.name, request.description or None)
+        return {
+            "success": True,
+            "name": request.name,
+            "path": str(ext_path),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e)) from e
+
+
+@app.post("/api/extensions/{name}/enable")
+async def enable_extension(name: str) -> dict[str, str]:
+    """Enable an extension."""
+    manager = ExtensionManager()
+    if manager.enable_extension(name):
+        return {"message": f"Enabled extension: {name}"}
+    raise HTTPException(status_code=404, detail=f"Extension not found: {name}")
+
+
+@app.post("/api/extensions/{name}/disable")
+async def disable_extension(name: str) -> dict[str, str]:
+    """Disable an extension."""
+    manager = ExtensionManager()
+    if manager.disable_extension(name):
+        return {"message": f"Disabled extension: {name}"}
+    raise HTTPException(status_code=404, detail=f"Extension not found: {name}")
+
+
+@app.delete("/api/extensions/{name}")
+async def delete_extension(name: str) -> dict[str, str]:
+    """Remove an extension."""
+    import shutil
+
+    ext_path = Path(".lloyd") / "extensions" / name
+    if not ext_path.exists():
+        raise HTTPException(status_code=404, detail=f"Extension not found: {name}")
+    shutil.rmtree(ext_path)
+    return {"message": f"Removed extension: {name}"}
 
 
 # Serve frontend for all non-API routes (SPA catch-all)

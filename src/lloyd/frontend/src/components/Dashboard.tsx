@@ -34,7 +34,7 @@ export function Dashboard({ status, progress: _progress, onRefresh, lastMessage,
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
         <div className="glass rounded-xl p-5 transition-all hover:border-[var(--border-hover)]">
           <p className="text-[var(--text-tertiary)] text-xs uppercase tracking-wider mb-3">Status</p>
           <div className="flex items-center gap-2">
@@ -85,8 +85,8 @@ export function Dashboard({ status, progress: _progress, onRefresh, lastMessage,
       <div className="glass rounded-xl p-5">
         <p className="text-[var(--text-tertiary)] text-xs uppercase tracking-wider mb-4">Recent Tasks</p>
         {status?.stories && status.stories.length > 0 ? (
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-            {status.stories.slice(0, 6).map((story) => (
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-6 gap-y-2">
+            {status.stories.slice(0, 9).map((story) => (
               <div key={story.id} className="flex items-center gap-3 py-2">
                 <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${story.passes ? 'bg-emerald-400' : 'bg-[var(--text-tertiary)]'}`} />
                 <span className="text-sm text-[var(--text-secondary)] truncate flex-1">{story.title}</span>

@@ -45,7 +45,7 @@ export function ProgressLog({ progress, onRefresh }: ProgressLogProps) {
   }
 
   return (
-    <div className="animate-fade-in max-w-4xl">
+    <div className="animate-fade-in">
       {/* Header */}
       <div className="flex items-end justify-between mb-8">
         <div>
@@ -71,7 +71,7 @@ export function ProgressLog({ progress, onRefresh }: ProgressLogProps) {
 
       {/* Stats */}
       {progress?.lines && progress.lines.length > 0 && (
-        <div className="grid grid-cols-4 gap-3 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
           <div className="glass rounded-xl p-4 text-center">
             <p className="text-2xl font-semibold text-[var(--text-primary)]">{progress.lines.length}</p>
             <p className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider mt-1">Lines</p>

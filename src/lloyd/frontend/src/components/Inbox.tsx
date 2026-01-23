@@ -83,9 +83,9 @@ export function Inbox() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-semibold text-[var(--text-primary)] flex items-center gap-2">
             <InboxIcon className="w-6 h-6 text-accent-500" />
@@ -127,7 +127,7 @@ export function Inbox() {
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           {items.map((item) => {
             const Icon = typeIcons[item.type] || InboxIcon
             return (

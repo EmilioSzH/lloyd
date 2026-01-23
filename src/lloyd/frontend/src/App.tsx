@@ -9,11 +9,15 @@ import { HowToUse } from './components/HowToUse'
 import { Inbox } from './components/Inbox'
 import { Brainstorm } from './components/Brainstorm'
 import { Knowledge } from './components/Knowledge'
+import { SelfMod } from './components/SelfMod'
+import { Extensions } from './components/Extensions'
+import { Appearance } from './components/Appearance'
 import { ThemeProvider } from './components/ThemeProvider'
+import { LayoutProvider } from './components/LayoutProvider'
 import { useWebSocket } from './hooks/useWebSocket'
 import { StatusResponse, ProgressResponse } from './types'
 
-type View = 'dashboard' | 'idea' | 'tasks' | 'progress' | 'settings' | 'guide' | 'inbox' | 'brainstorm' | 'knowledge'
+type View = 'dashboard' | 'idea' | 'tasks' | 'progress' | 'settings' | 'guide' | 'inbox' | 'brainstorm' | 'knowledge' | 'selfmod' | 'extensions' | 'appearance'
 
 function AppContent() {
   const [view, setView] = useState<View>('dashboard')
@@ -106,6 +110,12 @@ function AppContent() {
         return <Brainstorm />
       case 'knowledge':
         return <Knowledge />
+      case 'selfmod':
+        return <SelfMod />
+      case 'extensions':
+        return <Extensions />
+      case 'appearance':
+        return <Appearance />
       default:
         return <Dashboard status={status} progress={progress} onRefresh={refreshData} lastMessage={lastMessage} isConnected={isConnected} />
     }
@@ -122,12 +132,30 @@ function AppContent() {
     )
   }
 
+  // Map Lloyd status to mascot status
+  const getMascotStatus = (): 'idle' | 'working' | 'thinking' | 'complete' | 'error' => {
+    if (!status) return 'idle'
+    switch (status.status) {
+      case 'executing':
+      case 'in_progress':
+        return 'working'
+      case 'planning':
+        return 'thinking'
+      case 'complete':
+        return 'complete'
+      case 'error':
+        return 'error'
+      default:
+        return 'idle'
+    }
+  }
+
   return (
     <div className="flex min-h-screen">
-      <Sidebar currentView={view} onViewChange={setView} isConnected={isConnected} />
+      <Sidebar currentView={view} onViewChange={setView} isConnected={isConnected} currentStatus={getMascotStatus()} />
 
-      <main className="flex-1 p-8 overflow-auto">
-        <div className="max-w-6xl mx-auto">
+      <main className="flex-1 p-4 lg:p-6 xl:p-8 overflow-auto">
+        <div className="w-full max-w-[1800px] mx-auto">
           {renderView()}
         </div>
       </main>
@@ -150,7 +178,9 @@ function AppContent() {
 function App() {
   return (
     <ThemeProvider>
-      <AppContent />
+      <LayoutProvider>
+        <AppContent />
+      </LayoutProvider>
     </ThemeProvider>
   )
 }

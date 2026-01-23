@@ -51,7 +51,7 @@ export function Settings({ onInit }: SettingsProps) {
   }
 
   return (
-    <div className="animate-fade-in max-w-2xl">
+    <div className="animate-fade-in max-w-4xl">
       {/* Header */}
       <div className="mb-8">
         <p className="text-[var(--text-tertiary)] text-xs uppercase tracking-widest mb-1">Configure</p>
@@ -162,7 +162,7 @@ export function Settings({ onInit }: SettingsProps) {
           <p className="text-sm text-[var(--text-secondary)] mb-4">
             AI Executive Assistant that takes product ideas and autonomously executes them to completion.
           </p>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
             <div>
               <p className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider mb-1">Version</p>
               <p className="text-sm font-medium text-[var(--text-primary)]">0.1.0</p>

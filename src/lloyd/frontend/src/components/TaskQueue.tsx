@@ -67,7 +67,7 @@ export function TaskQueue({ status, onRefresh }: TaskQueueProps) {
     : 0
 
   return (
-    <div className="animate-fade-in max-w-4xl">
+    <div className="animate-fade-in">
       {/* Header */}
       <div className="flex items-end justify-between mb-8">
         <div>

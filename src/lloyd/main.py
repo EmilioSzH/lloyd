@@ -517,5 +517,309 @@ def reset_story(story_id: str) -> None:
     console.print(f"[red]Story not found: {story_id}[/red]")
 
 
+# ============== SELF-MODIFICATION COMMANDS ==============
+
+
+@cli.group()
+def selfmod() -> None:
+    """Self-modification commands."""
+    pass
+
+
+@selfmod.command("queue")
+def selfmod_queue() -> None:
+    """Show self-modification task queue."""
+    from lloyd.selfmod.queue import SelfModQueue
+
+    tasks = SelfModQueue().list_all()
+    if not tasks:
+        console.print("[dim]No self-modification tasks.[/dim]")
+        return
+
+    table = Table(title="Self-Modification Queue")
+    table.add_column("ID", style="cyan")
+    table.add_column("Risk", justify="center")
+    table.add_column("Status", style="white")
+    table.add_column("Description", style="dim")
+
+    for task in tasks:
+        risk_icon = {"safe": "[green]SAFE[/green]", "moderate": "[yellow]MODERATE[/yellow]", "risky": "[red]RISKY[/red]"}.get(
+            task.risk_level, "[dim]?[/dim]"
+        )
+        table.add_row(task.task_id, risk_icon, task.status, task.description[:40])
+
+    console.print(table)
+
+
+@selfmod.command("preview")
+@click.argument("task_id")
+def selfmod_preview(task_id: str) -> None:
+    """Preview a self-modification task."""
+    import os
+    import subprocess
+
+    from lloyd.selfmod.queue import SelfModQueue
+
+    task = SelfModQueue().get(task_id)
+    if not task:
+        console.print(f"[red]Task {task_id} not found.[/red]")
+        return
+
+    console.print(f"\n[bold]Task:[/bold] {task.task_id}")
+    console.print(f"[bold]Description:[/bold] {task.description}")
+    console.print(f"[bold]Risk:[/bold] {task.risk_level}")
+    console.print(f"[bold]Status:[/bold] {task.status}")
+    console.print(f"[bold]Clone:[/bold] {task.clone_path}")
+    console.print(f"\n[cyan]Approve:[/cyan] lloyd selfmod approve {task_id}")
+    console.print(f"[cyan]Reject:[/cyan] lloyd selfmod reject {task_id}")
+
+    # Open file explorer / terminal at clone
+    if task.clone_path:
+        if os.name == "nt":
+            subprocess.Popen(f'explorer "{task.clone_path}"', shell=True)
+        else:
+            subprocess.Popen(f'xdg-open "{task.clone_path}"', shell=True)
+
+
+@selfmod.command("diff")
+@click.argument("task_id")
+def selfmod_diff(task_id: str) -> None:
+    """Show diff for a self-modification task."""
+    from lloyd.selfmod.clone_manager import LloydCloneManager
+    from lloyd.selfmod.queue import SelfModQueue
+
+    task = SelfModQueue().get(task_id)
+    if not task:
+        console.print(f"[red]Task {task_id} not found.[/red]")
+        return
+
+    diff = LloydCloneManager().get_diff(task_id)
+    console.print(diff if diff else "[dim]No changes.[/dim]")
+
+
+@selfmod.command("test-now")
+def selfmod_test_now() -> None:
+    """Run GPU tests on awaiting tasks."""
+    from lloyd.selfmod.queue import SelfModQueue
+    from lloyd.selfmod.test_runner import SelfModTestRunner
+
+    queue = SelfModQueue()
+    tasks = queue.get_by_status("awaiting_gpu")
+
+    if not tasks:
+        console.print("[dim]No tasks awaiting GPU tests.[/dim]")
+        return
+
+    for task in tasks:
+        console.print(f"[cyan]Testing {task.task_id}...[/cyan]")
+        results = SelfModTestRunner(Path(task.clone_path)).run_gpu_tests()
+        task.test_results.update(results)
+
+        all_passed = all(r[0] for r in results.values())
+        if all_passed:
+            task.status = "awaiting_approval"
+            console.print(f"  [green]Passed! Approve: lloyd selfmod approve {task.task_id}[/green]")
+        else:
+            task.status = "failed"
+            console.print(f"  [red]Failed.[/red]")
+
+        queue.update(task)
+
+
+@selfmod.command("approve")
+@click.argument("task_id")
+def selfmod_approve(task_id: str) -> None:
+    """Approve and merge a self-modification."""
+    from lloyd.selfmod.clone_manager import LloydCloneManager
+    from lloyd.selfmod.queue import SelfModQueue
+
+    queue = SelfModQueue()
+    manager = LloydCloneManager()
+    task = queue.get(task_id)
+
+    if not task:
+        console.print(f"[red]Task {task_id} not found.[/red]")
+        return
+
+    if manager.merge_clone(task_id):
+        task.status = "merged"
+        queue.update(task)
+        manager.cleanup_clone(task_id)
+        console.print(f"[green]Merged {task_id}![/green]")
+    else:
+        console.print(f"[red]Merge failed for {task_id}.[/red]")
+
+
+@selfmod.command("reject")
+@click.argument("task_id")
+def selfmod_reject(task_id: str) -> None:
+    """Reject a self-modification."""
+    from lloyd.selfmod.clone_manager import LloydCloneManager
+    from lloyd.selfmod.queue import SelfModQueue
+
+    queue = SelfModQueue()
+    task = queue.get(task_id)
+
+    if task:
+        task.status = "rejected"
+        queue.update(task)
+
+    LloydCloneManager().cleanup_clone(task_id)
+    console.print(f"[yellow]Rejected {task_id}.[/yellow]")
+
+
+# ============== EXTENSION COMMANDS ==============
+
+
+@cli.group()
+def ext() -> None:
+    """Extension commands."""
+    pass
+
+
+@ext.command("list")
+def ext_list() -> None:
+    """List all extensions."""
+    from lloyd.extensions.manager import ExtensionManager
+
+    exts = ExtensionManager().discover()
+    if not exts:
+        console.print("[dim]No extensions. Create one: lloyd ext create <name>[/dim]")
+        return
+
+    table = Table(title="Extensions")
+    table.add_column("Name", style="cyan")
+    table.add_column("Version", style="dim")
+    table.add_column("Status", justify="center")
+    table.add_column("Description", style="white")
+
+    for e in exts:
+        if e.error:
+            status = "[red]ERROR[/red]"
+        elif e.enabled:
+            status = "[green]ON[/green]"
+        else:
+            status = "[dim]OFF[/dim]"
+        table.add_row(e.display_name, e.version, status, e.description[:35])
+
+    console.print(table)
+
+
+@ext.command("create")
+@click.argument("name")
+@click.option("-d", "--description", help="Extension description")
+def ext_create(name: str, description: str | None) -> None:
+    """Create a new extension scaffold."""
+    from lloyd.extensions.scaffold import create_extension_scaffold
+
+    path = create_extension_scaffold(name, description)
+    console.print(f"[green]Created extension:[/green] {path}")
+    console.print(f"Edit: {path}/tool.py")
+
+
+@ext.command("configure")
+@click.argument("name")
+def ext_configure(name: str) -> None:
+    """Configure an extension."""
+    import yaml
+
+    from lloyd.extensions.manager import ExtensionManager
+
+    manager = ExtensionManager()
+    manager.discover()
+    ext = manager.extensions.get(name)
+
+    if not ext:
+        console.print(f"[red]Extension {name} not found.[/red]")
+        return
+
+    # Load existing config
+    config_path = ext.path / "config.yaml"
+    config = {}
+    if config_path.exists():
+        with open(config_path, encoding="utf-8") as f:
+            config = yaml.safe_load(f) or {}
+
+    # Get required config from manifest
+    requires = ext.manifest.get("requires", {}).get("config", [])
+    if not requires:
+        console.print("[dim]No configuration required.[/dim]")
+        return
+
+    # Prompt for each config item
+    for item in requires:
+        key = item.get("key", "")
+        desc = item.get("description", key)
+        secret = item.get("secret", False)
+
+        current = config.get(key, "")
+        value = click.prompt(desc, default=current, hide_input=secret, show_default=not secret)
+        if value:
+            config[key] = value
+
+    # Save config
+    with open(config_path, "w", encoding="utf-8") as f:
+        yaml.dump(config, f)
+
+    console.print("[green]Configuration saved.[/green]")
+
+
+@ext.command("remove")
+@click.argument("name")
+def ext_remove(name: str) -> None:
+    """Remove an extension."""
+    import shutil
+
+    from lloyd.extensions.manager import ExtensionManager
+
+    manager = ExtensionManager()
+    manager.discover()
+    ext = manager.extensions.get(name)
+
+    if not ext:
+        console.print(f"[red]Extension {name} not found.[/red]")
+        return
+
+    if click.confirm(f"Remove extension {name}?"):
+        shutil.rmtree(ext.path)
+        console.print(f"[yellow]Removed {name}.[/yellow]")
+
+
+@ext.command("build")
+@click.argument("idea")
+def ext_build(idea: str) -> None:
+    """Build an extension from a natural language description."""
+    from lloyd.extensions.builder import build_extension_from_idea
+
+    result = build_extension_from_idea(idea)
+    if result["status"] == "created":
+        console.print(f"\n[green]Extension created:[/green] {result['extension']}")
+        if result["needs_config"]:
+            console.print(f"[cyan]Configure:[/cyan] lloyd ext configure {result['extension']}")
+
+
+# ============== CLASSIFY COMMAND ==============
+
+
+@cli.command()
+@click.argument("idea")
+def classify(idea: str) -> None:
+    """Classify an idea to see how Lloyd would handle it."""
+    from lloyd.orchestrator.intent_classifier import IntentClassifier
+
+    classifier = IntentClassifier()
+    intent, reason, confidence = classifier.classify(idea)
+    plan = classifier.get_implementation_plan(intent, idea)
+
+    console.print(f"\n[bold]Idea:[/bold] {idea}")
+    console.print(f"[bold]Detected:[/bold] {intent.value} (confidence: {confidence:.0%})")
+    console.print(f"[bold]Reason:[/bold] {reason}")
+    console.print(f"\n[bold]Approach:[/bold] {plan['approach']}")
+    console.print(f"[bold]Description:[/bold] {plan['description']}")
+    console.print(f"[bold]Steps:[/bold]")
+    for step in plan["steps"]:
+        console.print(f"  - {step}")
+
+
 if __name__ == "__main__":
     cli()

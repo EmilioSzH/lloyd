@@ -11,10 +11,12 @@ from lloyd.crews.quality import QualityCrew
 from lloyd.memory.prd_manager import PRD, PRDManager, Story
 from lloyd.memory.progress import ProgressTracker
 from lloyd.orchestrator.complexity import ComplexityAssessor, TaskComplexity
+from lloyd.orchestrator.input_classifier import InputClassifier, InputType
 from lloyd.orchestrator.metrics import MetricsStore, TaskMetrics
 from lloyd.orchestrator.parallel_executor import ParallelStoryExecutor
 from lloyd.orchestrator.project_context import ProjectContext, ProjectDetector
 from lloyd.orchestrator.router import check_all_complete, get_next_story, get_ready_stories
+from lloyd.orchestrator.spec_parser import SpecParser
 from lloyd.orchestrator.state import LloydState
 from lloyd.orchestrator.thread_safe_state import ThreadSafeStateManager
 
@@ -54,6 +56,11 @@ class LloydFlow:
         self.project_context: ProjectContext | None = None
         self.current_metrics: TaskMetrics | None = None
 
+        # Input classification
+        self.input_classifier = InputClassifier()
+        self.spec_parser = SpecParser()
+        self.input_type: InputType = InputType.IDEA
+
     @property
     def prd(self) -> PRD | None:
         """Get current PRD."""
@@ -62,30 +69,39 @@ class LloydFlow:
         return self._prd
 
     def receive_idea(self, idea: str) -> None:
-        """Receive a product idea to execute.
+        """Receive a product idea or spec document to execute.
 
         Args:
-            idea: The product idea description.
+            idea: The product idea description or spec document.
         """
-        console.print(f"[bold blue]Received idea:[/bold blue] {idea}")
+        console.print(f"[bold blue]Received input:[/bold blue] {idea[:200]}{'...' if len(idea) > 200 else ''}")
         self.state.idea = idea
         self.state.status = "planning"
         self.progress.start_session(f"Working on: {idea[:100]}...")
+
+        # Classify input type (idea vs spec document)
+        input_analysis = self.input_classifier.classify(idea)
+        self.input_type = input_analysis.input_type
+        console.print(f"[dim]Input type: {self.input_type.value} (confidence: {input_analysis.confidence:.0%}) - {input_analysis.reason}[/dim]")
 
         # Detect project context
         self.project_context = self.project_detector.detect()
         console.print(f"[dim]Project: {self.project_context.language} ({', '.join(self.project_context.detected_from) or 'no markers'})[/dim]")
 
-        # Assess complexity
-        assessment = self.complexity_assessor.assess(idea)
-        self.state.complexity = assessment.complexity.value
-        console.print(f"[dim]Complexity: {assessment.complexity.value} - {assessment.reasoning}[/dim]")
+        # Assess complexity (skip for specs - they define their own scope)
+        if self.input_type == InputType.SPEC:
+            self.state.complexity = "spec"
+            console.print(f"[dim]Complexity: spec document with {input_analysis.requirement_count} requirements[/dim]")
+        else:
+            assessment = self.complexity_assessor.assess(idea)
+            self.state.complexity = assessment.complexity.value
+            console.print(f"[dim]Complexity: {assessment.complexity.value} - {assessment.reasoning}[/dim]")
 
         # Start metrics tracking
         self.current_metrics = TaskMetrics(
             task_id=str(uuid.uuid4())[:8],
             idea=idea,
-            complexity=assessment.complexity.value,
+            complexity=self.state.complexity,
         )
 
     def create_trivial_prd(self) -> PRD:
@@ -119,6 +135,61 @@ class LloydFlow:
 
         if self.current_metrics:
             self.current_metrics.agents_used.append("direct_execution")
+
+        return prd
+
+    def create_prd_from_spec(self) -> PRD:
+        """Create a PRD directly from a parsed spec document.
+
+        Skips the planning crew since the spec already defines requirements.
+
+        Returns:
+            Created PRD with stories from spec requirements.
+        """
+        console.print("[green]SPEC document detected - parsing requirements directly[/green]")
+
+        # Parse the spec document
+        parsed = self.spec_parser.parse(self.state.idea)
+        console.print(f"[dim]Parsed: {parsed.title} with {len(parsed.requirements)} requirements[/dim]")
+
+        # Create PRD
+        prd = self.prd_manager.create_new(
+            project_name=parsed.title,
+            description=parsed.description,
+        )
+
+        # Convert requirements to stories
+        stories_data = self.spec_parser.requirements_to_stories(parsed)
+
+        # Add each story to PRD
+        for story_data in stories_data:
+            story = Story(
+                id=story_data["id"],
+                title=story_data["title"],
+                description=story_data["description"],
+                acceptance_criteria=story_data["acceptanceCriteria"],
+                priority=story_data["priority"],
+                dependencies=story_data["dependencies"],
+                passes=False,
+                attempts=0,
+                notes=f"Section: {story_data['section']}",
+            )
+            prd.stories.append(story)
+
+        self._prd = prd
+        self.prd_manager.save(prd)
+
+        self.state.prd = prd.model_dump()
+        self.progress.append(f"Created PRD from spec with {len(prd.stories)} stories")
+
+        if self.current_metrics:
+            self.current_metrics.agents_used.append("spec_parser")
+
+        console.print(f"[bold cyan]Created {len(prd.stories)} stories from spec:[/bold cyan]")
+        for story in prd.stories[:5]:  # Show first 5
+            console.print(f"  - [{story.id}] {story.title}")
+        if len(prd.stories) > 5:
+            console.print(f"  ... and {len(prd.stories) - 5} more")
 
         return prd
 
@@ -446,11 +517,16 @@ class LloydFlow:
         else:
             console.print("[bold blue]Starting Lloyd workflow (sequential mode)...[/bold blue]")
 
-        # Phase 1: Planning (skip for trivial tasks)
+        # Phase 1: Planning (route based on input type)
         if self.state.status == "planning" or not self.prd:
-            if self.state.complexity == TaskComplexity.TRIVIAL.value:
+            if self.input_type == InputType.SPEC:
+                # Spec document - parse directly, skip planning crew
+                self.create_prd_from_spec()
+            elif self.state.complexity == TaskComplexity.TRIVIAL.value:
+                # Trivial idea - skip planning crew
                 self.create_trivial_prd()
             else:
+                # Regular idea - use planning crew
                 self.decompose_idea()
 
         # Phase 2: Execution loop

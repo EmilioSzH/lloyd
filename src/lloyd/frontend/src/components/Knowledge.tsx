@@ -87,9 +87,9 @@ export function Knowledge() {
   const categories = [...new Set(entries.map((e) => e.category))]
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-2xl font-semibold text-[var(--text-primary)] flex items-center gap-2">
             <BookOpen className="w-6 h-6 text-accent-500" />
@@ -134,7 +134,7 @@ export function Knowledge() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="glass rounded-xl p-4">
           <div className="text-2xl font-semibold text-[var(--text-primary)]">{entries.length}</div>
           <div className="text-sm text-[var(--text-tertiary)]">Total entries</div>
@@ -169,7 +169,7 @@ export function Knowledge() {
           </p>
         </div>
       ) : (
-        <div className="space-y-3">
+        <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           {filteredEntries.map((entry) => (
             <div
               key={entry.id}

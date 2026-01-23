@@ -46,7 +46,7 @@ export function IdeaForm({ onSubmit }: IdeaFormProps) {
   ]
 
   return (
-    <div className="animate-fade-in max-w-2xl">
+    <div className="animate-fade-in max-w-4xl mx-auto">
       {/* Header */}
       <div className="mb-8">
         <p className="text-[var(--text-tertiary)] text-xs uppercase tracking-widest mb-1">Create</p>
