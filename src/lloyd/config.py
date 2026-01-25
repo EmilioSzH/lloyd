@@ -2,23 +2,80 @@
 
 import os
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 # LLM Model Configuration
-# Use Ollama with local models (no API key required)
-DEFAULT_LLM = "ollama/qwen2.5:14b"
+# Use Ollama with qwen2.5:32b on remote RunPod (RTX 5090 GPU)
+DEFAULT_LLM = "ollama/qwen2.5:32b"
+DEFAULT_OLLAMA_HOST = "http://localhost:11434"  # Use SSH tunnel to RunPod
+
+
+def get_ollama_host() -> str:
+    """Get the Ollama server host URL.
+
+    Returns:
+        Ollama host URL (e.g., 'http://localhost:11434').
+    """
+    return os.environ.get("OLLAMA_HOST", DEFAULT_OLLAMA_HOST)
 
 
 def get_llm() -> str:
     """Get the configured LLM model string for CrewAI.
 
     Returns:
-        LLM model string (e.g., 'ollama/qwen2.5:14b').
+        LLM model string (e.g., 'ollama/qwen2.5:32b').
     """
     return os.environ.get("LLOYD_LLM", DEFAULT_LLM)
+
+
+def get_llm_client() -> Any:
+    """Get a LangChain-compatible LLM client for direct invocation.
+
+    This returns an object with an .invoke() method for direct LLM calls
+    outside of CrewAI.
+
+    Returns:
+        LangChain-compatible LLM client.
+    """
+    llm_string = get_llm()
+    ollama_host = get_ollama_host()
+
+    # Parse the model string (format: provider/model)
+    if "/" in llm_string:
+        provider, model = llm_string.split("/", 1)
+    else:
+        provider = "ollama"
+        model = llm_string
+
+    if provider == "ollama":
+        try:
+            from langchain_ollama import ChatOllama
+            return ChatOllama(model=model, base_url=ollama_host)
+        except ImportError:
+            # Fallback to langchain_community
+            from langchain_community.chat_models import ChatOllama
+            return ChatOllama(model=model, base_url=ollama_host)
+
+    elif provider in ("openai", "gpt"):
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(model=model)
+
+    elif provider == "anthropic":
+        from langchain_anthropic import ChatAnthropic
+        return ChatAnthropic(model=model)
+
+    else:
+        # Default to Ollama
+        try:
+            from langchain_ollama import ChatOllama
+            return ChatOllama(model=llm_string, base_url=ollama_host)
+        except ImportError:
+            from langchain_community.chat_models import ChatOllama
+            return ChatOllama(model=llm_string, base_url=ollama_host)
 
 
 class LloydSettings(BaseSettings):

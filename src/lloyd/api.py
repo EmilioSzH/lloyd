@@ -76,6 +76,17 @@ class IdeaRequest(BaseModel):
     max_parallel: int = 3
     sequential: bool = False
     dry_run: bool = False
+    queue_only: bool = False  # Add to queue without running
+
+
+class QueueIdeaRequest(BaseModel):
+    description: str
+    priority: int = 1
+
+
+class BatchIdeaRequest(BaseModel):
+    ideas: list[str]
+    priority: int = 1
 
 
 class StoryReset(BaseModel):
@@ -144,36 +155,73 @@ async def get_progress() -> ProgressResponse:
 @app.post("/api/idea")
 async def submit_idea(request: IdeaRequest) -> dict[str, Any]:
     """Submit a new product idea."""
-    from lloyd.orchestrator.flow import LloydFlow
+    try:
+        # Validate description
+        if not request.description or not request.description.strip():
+            raise HTTPException(status_code=400, detail="Description cannot be empty")
 
-    parallel = not request.sequential
-    flow = LloydFlow(max_parallel=request.max_parallel)
-    flow.state.parallel_mode = parallel
-    flow.receive_idea(request.description)
+        # If queue_only, just add to queue
+        if request.queue_only:
+            from lloyd.orchestrator.idea_queue import IdeaQueue
 
-    # Broadcast status update
-    await manager.broadcast({"type": "status", "message": f"Received idea: {request.description}"})
+            q = IdeaQueue()
+            idea = q.add(request.description)
 
-    if request.dry_run:
-        # Just create the PRD
-        prd = flow.decompose_idea()
-        await manager.broadcast({"type": "prd_created", "stories": len(prd.stories)})
+            await manager.broadcast({
+                "type": "queue_updated",
+                "action": "added",
+                "idea_id": idea.id,
+            })
+
+            return {
+                "success": True,
+                "message": f"Added to queue: {idea.id}",
+                "idea_id": idea.id,
+                "queued": True,
+            }
+
+        from lloyd.orchestrator.flow import LloydFlow
+
+        parallel = not request.sequential
+        flow = LloydFlow(max_parallel=request.max_parallel)
+        flow.state.parallel_mode = parallel
+        flow.receive_idea(request.description)
+
+        # Broadcast status update
+        desc_preview = request.description[:200] + "..." if len(request.description) > 200 else request.description
+        await manager.broadcast({"type": "status", "message": f"Received idea: {desc_preview}"})
+
+        if request.dry_run:
+            # Just create the PRD
+            prd = flow.decompose_idea()
+            await manager.broadcast({"type": "prd_created", "stories": len(prd.stories)})
+            return {
+                "success": True,
+                "message": "PRD created (dry run)",
+                "stories": len(prd.stories),
+            }
+
+        # Start execution in background
+        asyncio.create_task(run_workflow_async(flow, request.max_iterations, parallel))
+
         return {
             "success": True,
-            "message": "PRD created (dry run)",
-            "stories": len(prd.stories),
+            "message": "Execution started",
+            "max_iterations": request.max_iterations,
+            "max_parallel": request.max_parallel,
+            "parallel": parallel,
         }
 
-    # Start execution in background
-    asyncio.create_task(run_workflow_async(flow, request.max_iterations, parallel))
-
-    return {
-        "success": True,
-        "message": "Execution started",
-        "max_iterations": request.max_iterations,
-        "max_parallel": request.max_parallel,
-        "parallel": parallel,
-    }
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Log the error and return a helpful message
+        error_msg = str(e)
+        await manager.broadcast({
+            "type": "error",
+            "message": f"Failed to submit idea: {error_msg}",
+        })
+        raise HTTPException(status_code=500, detail=f"Failed to submit idea: {error_msg}")
 
 
 async def run_workflow_async(flow: Any, max_iterations: int, parallel: bool = True) -> None:
@@ -666,6 +714,239 @@ async def delete_extension(name: str) -> dict[str, str]:
         raise HTTPException(status_code=404, detail=f"Extension not found: {name}")
     shutil.rmtree(ext_path)
     return {"message": f"Removed extension: {name}"}
+
+
+# ============== Idea Queue API ==============
+
+
+@app.get("/api/queue")
+async def get_idea_queue(show_all: bool = False) -> list[dict[str, Any]]:
+    """Get ideas in the queue."""
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    q = IdeaQueue()
+    ideas = q.list_all() if show_all else q.list_pending()
+    return [idea.to_dict() for idea in ideas]
+
+
+@app.get("/api/queue/stats")
+async def get_queue_stats() -> dict[str, int]:
+    """Get queue statistics."""
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    q = IdeaQueue()
+    return q.count()
+
+
+@app.get("/api/queue/{idea_id}")
+async def get_queue_idea(idea_id: str) -> dict[str, Any]:
+    """Get a specific queued idea."""
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    q = IdeaQueue()
+    idea = q.get(idea_id)
+    if not idea:
+        raise HTTPException(status_code=404, detail=f"Idea not found: {idea_id}")
+    return idea.to_dict()
+
+
+@app.post("/api/queue")
+async def add_to_queue(request: QueueIdeaRequest) -> dict[str, Any]:
+    """Add an idea to the queue."""
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    q = IdeaQueue()
+    idea = q.add(request.description, priority=request.priority)
+
+    await manager.broadcast({
+        "type": "queue_updated",
+        "action": "added",
+        "idea_id": idea.id,
+    })
+
+    return {
+        "success": True,
+        "idea_id": idea.id,
+        "message": f"Added to queue: {idea.id}",
+    }
+
+
+@app.post("/api/queue/batch")
+async def add_batch_to_queue(request: BatchIdeaRequest) -> dict[str, Any]:
+    """Add multiple ideas to the queue."""
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    if not request.ideas:
+        raise HTTPException(status_code=400, detail="No ideas provided")
+
+    q = IdeaQueue()
+    ideas = q.add_many(request.ideas, priority=request.priority)
+
+    await manager.broadcast({
+        "type": "queue_updated",
+        "action": "batch_added",
+        "count": len(ideas),
+    })
+
+    return {
+        "success": True,
+        "count": len(ideas),
+        "idea_ids": [idea.id for idea in ideas],
+        "message": f"Added {len(ideas)} ideas to queue",
+    }
+
+
+@app.delete("/api/queue/{idea_id}")
+async def remove_from_queue(idea_id: str) -> dict[str, str]:
+    """Remove an idea from the queue."""
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    q = IdeaQueue()
+    if not q.remove(idea_id):
+        raise HTTPException(status_code=404, detail=f"Idea not found: {idea_id}")
+
+    await manager.broadcast({
+        "type": "queue_updated",
+        "action": "removed",
+        "idea_id": idea_id,
+    })
+
+    return {"message": f"Removed from queue: {idea_id}"}
+
+
+@app.post("/api/queue/clear")
+async def clear_queue(completed_only: bool = True) -> dict[str, Any]:
+    """Clear completed ideas from the queue."""
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    q = IdeaQueue()
+    removed = q.clear_completed()
+
+    await manager.broadcast({
+        "type": "queue_updated",
+        "action": "cleared",
+        "count": removed,
+    })
+
+    return {
+        "success": True,
+        "removed": removed,
+        "message": f"Cleared {removed} completed ideas",
+    }
+
+
+@app.post("/api/queue/run")
+async def run_queue(
+    max_iterations: int = 50,
+    max_parallel: int = 3,
+    sequential: bool = False,
+    limit: int = 0,
+) -> dict[str, Any]:
+    """Start processing the idea queue."""
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    q = IdeaQueue()
+    pending = q.list_pending()
+
+    if not pending:
+        return {
+            "success": False,
+            "message": "No pending ideas in queue",
+        }
+
+    if limit > 0:
+        pending = pending[:limit]
+
+    # Start processing in background
+    asyncio.create_task(
+        run_queue_async(
+            pending,
+            max_iterations=max_iterations,
+            max_parallel=max_parallel,
+            sequential=sequential,
+        )
+    )
+
+    return {
+        "success": True,
+        "message": f"Started processing {len(pending)} ideas",
+        "count": len(pending),
+    }
+
+
+async def run_queue_async(
+    ideas: list[Any],
+    max_iterations: int,
+    max_parallel: int,
+    sequential: bool,
+) -> None:
+    """Process queued ideas asynchronously."""
+    from lloyd.orchestrator.flow import run_lloyd
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    q = IdeaQueue()
+    parallel = not sequential
+
+    for i, idea in enumerate(ideas, 1):
+        await manager.broadcast({
+            "type": "queue_progress",
+            "current": i,
+            "total": len(ideas),
+            "idea_id": idea.id,
+            "status": "starting",
+        })
+
+        # Mark as in progress
+        q.start(idea.id)
+
+        try:
+            # Run in executor to not block event loop
+            import asyncio
+
+            loop = asyncio.get_event_loop()
+            state = await loop.run_in_executor(
+                None,
+                lambda: run_lloyd(
+                    idea.description,
+                    max_iterations=max_iterations,
+                    max_parallel=max_parallel,
+                    parallel=parallel,
+                ),
+            )
+
+            success = state.status == "complete"
+            q.complete(
+                idea.id,
+                success=success,
+                iterations=state.iteration,
+                prd_path=".lloyd/prd.json" if success else None,
+                error=None if success else f"Status: {state.status}",
+            )
+
+            await manager.broadcast({
+                "type": "queue_progress",
+                "current": i,
+                "total": len(ideas),
+                "idea_id": idea.id,
+                "status": "completed" if success else "failed",
+            })
+
+        except Exception as e:
+            q.complete(idea.id, success=False, error=str(e))
+            await manager.broadcast({
+                "type": "queue_progress",
+                "current": i,
+                "total": len(ideas),
+                "idea_id": idea.id,
+                "status": "error",
+                "error": str(e),
+            })
+
+    # Final summary
+    await manager.broadcast({
+        "type": "queue_complete",
+        "stats": q.count(),
+    })
 
 
 # Serve frontend for all non-API routes (SPA catch-all)

@@ -1,26 +1,41 @@
 """Main Lloyd orchestration flow."""
 
+import os
+import sys
 import uuid
+from pathlib import Path
 from typing import Any
+
+# Fix Windows console encoding
+if sys.platform == "win32":
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 from rich.console import Console
 
 from lloyd.crews.execution import ExecutionCrew
 from lloyd.crews.planning import PlanningCrew
 from lloyd.crews.quality import QualityCrew
+from lloyd.orchestrator.iterative_executor import IterativeExecutor
 from lloyd.memory.prd_manager import PRD, PRDManager, Story
 from lloyd.memory.progress import ProgressTracker
 from lloyd.orchestrator.complexity import ComplexityAssessor, TaskComplexity
 from lloyd.orchestrator.input_classifier import InputClassifier, InputType
 from lloyd.orchestrator.metrics import MetricsStore, TaskMetrics
 from lloyd.orchestrator.parallel_executor import ParallelStoryExecutor
+from lloyd.orchestrator.policy_engine import PolicyEngine, PolicyEffect
 from lloyd.orchestrator.project_context import ProjectContext, ProjectDetector
 from lloyd.orchestrator.router import check_all_complete, get_next_story, get_ready_stories
 from lloyd.orchestrator.spec_parser import SpecParser
 from lloyd.orchestrator.state import LloydState
 from lloyd.orchestrator.thread_safe_state import ThreadSafeStateManager
 
-console = Console()
+# Use safe_box for Windows compatibility
+console = Console(force_terminal=True, safe_box=True)
 
 
 class LloydFlow:
@@ -31,6 +46,7 @@ class LloydFlow:
         prd_path: str = ".lloyd/prd.json",
         progress_path: str = ".lloyd/progress.txt",
         max_parallel: int = 3,
+        use_iterative_executor: bool = True,
     ) -> None:
         """Initialize the Lloyd flow.
 
@@ -38,6 +54,7 @@ class LloydFlow:
             prd_path: Path to PRD file.
             progress_path: Path to progress file.
             max_parallel: Maximum number of parallel workers.
+            use_iterative_executor: Use TDD-based iterative executor instead of crew.
         """
         self.state = LloydState()
         self.state.max_parallel = max_parallel
@@ -48,6 +65,13 @@ class LloydFlow:
         self.execution_crew = ExecutionCrew()
         self.quality_crew = QualityCrew()
         self._prd: PRD | None = None
+
+        # Iterative TDD executor (new approach)
+        self.use_iterative_executor = use_iterative_executor
+        # Use .lloyd/output as the working directory for generated code
+        output_dir = Path(prd_path).parent / "output"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        self.iterative_executor = IterativeExecutor(working_dir=output_dir) if use_iterative_executor else None
 
         # New components for complexity routing
         self.complexity_assessor = ComplexityAssessor()
@@ -60,6 +84,10 @@ class LloydFlow:
         self.input_classifier = InputClassifier()
         self.spec_parser = SpecParser()
         self.input_type: InputType = InputType.IDEA
+
+        # Policy engine for behavior modification
+        self.policy_engine = PolicyEngine()
+        self.current_policy_effect: PolicyEffect | None = None
 
     @property
     def prd(self) -> PRD | None:
@@ -255,6 +283,82 @@ class LloydFlow:
 
         return self.state.current_story
 
+    def _build_policy_context(self, story: dict[str, Any]) -> dict[str, Any]:
+        """Build context dict for policy evaluation.
+
+        Args:
+            story: Current story dict.
+
+        Returns:
+            Context dict for policy engine.
+        """
+        # Get story's retry count from PRD
+        retry_count = 0
+        if self.prd:
+            story_obj = self.prd_manager.get_story_by_id(self.prd, story.get("id", ""))
+            if story_obj:
+                retry_count = story_obj.attempts
+
+        # Detect categories from story description
+        description = f"{story.get('title', '')} {story.get('description', '')}"
+        categories = []
+        category_keywords = {
+            "auth": ["auth", "login", "jwt", "token", "session"],
+            "database": ["database", "db", "sql", "migration"],
+            "api": ["api", "endpoint", "rest", "http"],
+            "testing": ["test", "pytest", "unittest"],
+            "config": ["config", "env", "settings"],
+            "ui": ["ui", "frontend", "component", "render"],
+        }
+        for cat, keywords in category_keywords.items():
+            if any(kw in description.lower() for kw in keywords):
+                categories.append(cat)
+
+        # Build context
+        context = {
+            "description": description,
+            "complexity": self.state.complexity,
+            "categories": categories,
+            "retry_count": retry_count,
+            "user_preferences": {},  # Could be loaded from config
+            "coder_success_rate": 0.7,  # Could be computed from metrics
+            "project_files": [],  # Could be detected
+        }
+
+        # Add project context if available
+        if self.project_context:
+            context["project_language"] = self.project_context.language
+            context["project_files"] = list(self.project_context.detected_from)
+
+        return context
+
+    def _evaluate_policies(self, story: dict[str, Any]) -> PolicyEffect:
+        """Evaluate policies for the current story.
+
+        Args:
+            story: Current story dict.
+
+        Returns:
+            PolicyEffect with applicable modifications.
+        """
+        context = self._build_policy_context(story)
+        effect = self.policy_engine.evaluate(context)
+        self.current_policy_effect = effect
+
+        # Log applied policies
+        if effect.applied_policies:
+            console.print(f"[dim]Applied policies: {', '.join(effect.applied_policies)}[/dim]")
+
+        # Log warnings
+        for warning in effect.warnings:
+            console.print(f"[yellow]Policy warning:[/yellow] {warning}")
+
+        # Log injected steps
+        for step in effect.inject_steps:
+            self.progress.append(f"Policy injected step: {step}")
+
+        return effect
+
     def execute_story(self) -> Any:
         """Execute the current story.
 
@@ -267,13 +371,29 @@ class LloydFlow:
         story = self.state.current_story
         console.print(f"[yellow]Executing:[/yellow] {story['title']}")
 
-        result = self.execution_crew.kickoff(
-            inputs={
-                "story": story,
-                "prd": self.state.prd,
-                "progress": self.progress.read(),
-            }
-        )
+        # Use iterative TDD executor if enabled
+        if self.use_iterative_executor and self.iterative_executor:
+            console.print("[dim]Using iterative TDD executor[/dim]")
+            result = self.iterative_executor.execute_story(story)
+
+            # Check if passed and update story directly
+            if result.get("passes"):
+                if self.prd:
+                    story_obj = self.prd_manager.get_story_by_id(self.prd, story["id"])
+                    if story_obj:
+                        story_obj.passes = True
+                        story_obj.attempts += 1
+                        story_obj.notes += f"\nPassed via iterative executor ({result.get('passed_steps')}/{result.get('total_steps')} steps)"
+                        self.prd_manager.save(self.prd)
+        else:
+            # Use traditional crew-based execution
+            result = self.execution_crew.kickoff(
+                inputs={
+                    "story": story,
+                    "prd": self.state.prd,
+                    "progress": self.progress.read(),
+                }
+            )
 
         self.progress.append(f"Executed: {story['title']}")
         return result
@@ -294,6 +414,33 @@ class LloydFlow:
         console.print(f"[yellow]Verifying:[/yellow] {story['title']}")
         self.state.status = "testing"
 
+        # If using iterative executor, result already contains pass/fail from pytest
+        if self.use_iterative_executor and isinstance(execution_result, dict):
+            passes = execution_result.get("passes", False)
+            console.print(f"[dim]Iterative executor result: {execution_result.get('status')}[/dim]")
+
+            # Update story in PRD (may already be updated by execute_story)
+            if self.prd:
+                story_obj = self.prd_manager.get_story_by_id(self.prd, story["id"])
+                if story_obj and not story_obj.passes:  # Only update if not already passed
+                    story_obj.passes = passes
+                    story_obj.attempts += 1
+                    if passes:
+                        story_obj.notes += f"\nVerified via pytest on attempt {story_obj.attempts}"
+                    else:
+                        failures = execution_result.get("failures", [])
+                        failure_info = "; ".join(f.get("description", "unknown") for f in failures[:3])
+                        story_obj.notes += f"\nFailed: {failure_info}"
+                    self.prd_manager.save(self.prd)
+
+            self.progress.log_iteration(
+                self.state.iteration,
+                story["title"],
+                "PASSED" if passes else "FAILED",
+            )
+            return passes
+
+        # Traditional crew-based verification
         result = self.quality_crew.kickoff(
             inputs={
                 "story": story,
@@ -338,11 +485,26 @@ class LloydFlow:
         if not story:
             return False
 
-        # Execute story
+        # Evaluate policies before execution
+        policy_effect = self._evaluate_policies(story)
+
+        # Execute story (policy effects can modify behavior)
         execution_result = self.execute_story()
 
-        # Verify story
-        passes = self.verify_story(execution_result)
+        # Verify story (may skip if policy says so)
+        if policy_effect and "reviewer" in policy_effect.skip_agents:
+            console.print("[dim]Skipping verification per policy[/dim]")
+            passes = True
+            # Still update story in PRD
+            if self.prd:
+                story_obj = self.prd_manager.get_story_by_id(self.prd, story["id"])
+                if story_obj:
+                    story_obj.passes = True
+                    story_obj.attempts += 1
+                    story_obj.notes += f"\nSkipped verification per policy"
+                    self.prd_manager.save(self.prd)
+        else:
+            passes = self.verify_story(execution_result)
 
         if passes:
             console.print(f"[green]Task completed:[/green] {story['title']}")
@@ -373,13 +535,27 @@ class LloydFlow:
         """
         console.print(f"[yellow]Executing:[/yellow] {story.title}")
 
-        result = self.execution_crew.kickoff(
-            inputs={
-                "story": story.model_dump(),
-                "prd": self.state.prd,
-                "progress": self.progress.read(),
-            }
-        )
+        # Use iterative TDD executor if enabled
+        if self.use_iterative_executor and self.iterative_executor:
+            console.print("[dim]Using iterative TDD executor (parallel)[/dim]")
+            result = self.iterative_executor.execute_story(story.model_dump())
+
+            # Update story if passed
+            if result.get("passes"):
+                story.passes = True
+                story.attempts += 1
+                story.notes += f"\nPassed via iterative executor ({result.get('passed_steps')}/{result.get('total_steps')} steps)"
+                if self.prd:
+                    self.prd_manager.save(self.prd)
+        else:
+            # Use traditional crew-based execution
+            result = self.execution_crew.kickoff(
+                inputs={
+                    "story": story.model_dump(),
+                    "prd": self.state.prd,
+                    "progress": self.progress.read(),
+                }
+            )
 
         self.progress.append(f"Executed: {story.title}")
         return result
@@ -396,15 +572,20 @@ class LloydFlow:
         """
         console.print(f"[yellow]Verifying:[/yellow] {story.title}")
 
-        result = self.quality_crew.kickoff(
-            inputs={
-                "story": story.model_dump(),
-                "execution_result": execution_result,
-                "acceptance_criteria": story.acceptance_criteria,
-            }
-        )
-
-        passes = result.get("passes", False)
+        # If using iterative executor, result already contains pass/fail from pytest
+        if self.use_iterative_executor and isinstance(execution_result, dict):
+            passes = execution_result.get("passes", False)
+            console.print(f"[dim]Iterative executor result: {execution_result.get('status')}[/dim]")
+        else:
+            # Use traditional crew-based verification
+            result = self.quality_crew.kickoff(
+                inputs={
+                    "story": story.model_dump(),
+                    "execution_result": execution_result,
+                    "acceptance_criteria": story.acceptance_criteria,
+                }
+            )
+            passes = result.get("passes", False)
 
         self.progress.log_iteration(
             self.state.iteration,
@@ -522,8 +703,8 @@ class LloydFlow:
             if self.input_type == InputType.SPEC:
                 # Spec document - parse directly, skip planning crew
                 self.create_prd_from_spec()
-            elif self.state.complexity == TaskComplexity.TRIVIAL.value:
-                # Trivial idea - skip planning crew
+            elif self.state.complexity in (TaskComplexity.TRIVIAL.value, TaskComplexity.SIMPLE.value):
+                # Trivial/Simple idea - skip planning crew (direct to execution)
                 self.create_trivial_prd()
             else:
                 # Regular idea - use planning crew
@@ -559,6 +740,7 @@ def run_lloyd(
     max_iterations: int = 50,
     max_parallel: int = 3,
     parallel: bool = True,
+    use_iterative_executor: bool = True,
 ) -> LloydState:
     """Run Lloyd with a product idea.
 
@@ -567,11 +749,12 @@ def run_lloyd(
         max_iterations: Maximum iterations before stopping.
         max_parallel: Maximum number of parallel workers.
         parallel: Whether to run in parallel mode.
+        use_iterative_executor: Use TDD-based iterative executor (recommended).
 
     Returns:
         Final Lloyd state.
     """
-    flow = LloydFlow(max_parallel=max_parallel)
+    flow = LloydFlow(max_parallel=max_parallel, use_iterative_executor=use_iterative_executor)
     flow.state.max_iterations = max_iterations
     flow.state.parallel_mode = parallel
     flow.receive_idea(idea)

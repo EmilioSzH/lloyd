@@ -1,7 +1,20 @@
 """CLI entry point for Lloyd."""
 
 import json
+import os
+import sys
 from pathlib import Path
+
+# Fix Windows console encoding for emoji/unicode characters
+if sys.platform == "win32":
+    # Set UTF-8 encoding for Python I/O
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    # Try to enable UTF-8 mode on Windows console
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass  # Ignore if reconfigure not available
 
 import click
 from rich.console import Console
@@ -10,7 +23,8 @@ from rich.table import Table
 
 from lloyd import __version__
 
-console = Console()
+# Use force_terminal=True to ensure Rich works properly, and use safe encoding
+console = Console(force_terminal=True, safe_box=True)
 
 
 @click.group(invoke_without_command=True)
@@ -50,6 +64,7 @@ def cli(ctx: click.Context) -> None:
 @click.option("--branch", "-b", is_flag=True, help="Create a git branch for this task")
 @click.option("--auto-pr", is_flag=True, help="Create PR when complete")
 @click.option("--draft-pr", is_flag=True, help="Create draft PR when complete")
+@click.option("--legacy", is_flag=True, help="Use legacy crew-based execution (not TDD)")
 def idea(
     description: str,
     max_iterations: int,
@@ -59,6 +74,7 @@ def idea(
     branch: bool,
     auto_pr: bool,
     draft_pr: bool,
+    legacy: bool,
 ) -> None:
     """Submit a new product idea for Lloyd to execute."""
     import uuid
@@ -92,8 +108,10 @@ def idea(
         console.print("[green]PRD created. Run 'lloyd status' to see tasks.[/green]")
     else:
         parallel = not sequential
+        use_iterative = not legacy
         mode_str = "sequential" if sequential else f"parallel (max {max_parallel} workers)"
-        console.print(f"[cyan]Starting autonomous execution ({mode_str}, max {max_iterations} iterations)...[/cyan]")
+        exec_str = "TDD iterative" if use_iterative else "legacy crew"
+        console.print(f"[cyan]Starting autonomous execution ({mode_str}, {exec_str}, max {max_iterations} iterations)...[/cyan]")
         from lloyd.orchestrator.flow import run_lloyd
 
         state = run_lloyd(
@@ -101,6 +119,7 @@ def idea(
             max_iterations=max_iterations,
             max_parallel=max_parallel,
             parallel=parallel,
+            use_iterative_executor=use_iterative,
         )
         console.print(f"\n[bold]Final status:[/bold] {state.status}")
         console.print(f"[bold]Iterations:[/bold] {state.iteration}")
@@ -819,6 +838,240 @@ def classify(idea: str) -> None:
     console.print(f"[bold]Steps:[/bold]")
     for step in plan["steps"]:
         console.print(f"  - {step}")
+
+
+# ============== QUEUE COMMANDS ==============
+
+
+@cli.group()
+def queue() -> None:
+    """Idea queue commands for batch processing."""
+    pass
+
+
+@queue.command("add")
+@click.argument("description")
+@click.option("--priority", "-p", default=1, help="Priority (lower = higher priority)")
+def queue_add(description: str, priority: int) -> None:
+    """Add an idea to the queue."""
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    q = IdeaQueue()
+    idea = q.add(description, priority=priority)
+    console.print(f"[green]Added to queue:[/green] {idea.id}")
+    console.print(f"[dim]{description[:100]}{'...' if len(description) > 100 else ''}[/dim]")
+
+
+@queue.command("add-file")
+@click.argument("file_path", type=click.Path(exists=True))
+@click.option("--priority", "-p", default=1, help="Priority (lower = higher priority)")
+def queue_add_file(file_path: str, priority: int) -> None:
+    """Add an idea from a file (spec document or text file)."""
+    from pathlib import Path
+
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    content = Path(file_path).read_text(encoding="utf-8")
+    q = IdeaQueue()
+    idea = q.add(content, priority=priority)
+    console.print(f"[green]Added to queue:[/green] {idea.id}")
+    console.print(f"[dim]From file: {file_path} ({len(content)} chars)[/dim]")
+
+
+@queue.command("add-many")
+@click.argument("descriptions", nargs=-1)
+def queue_add_many(descriptions: tuple[str, ...]) -> None:
+    """Add multiple ideas to the queue."""
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    if not descriptions:
+        console.print("[yellow]No ideas provided.[/yellow]")
+        return
+
+    q = IdeaQueue()
+    ideas = q.add_many(list(descriptions))
+    console.print(f"[green]Added {len(ideas)} ideas to queue:[/green]")
+    for idea in ideas:
+        console.print(f"  [{idea.id}] {idea.description[:50]}...")
+
+
+@queue.command("list")
+@click.option("--all", "-a", "show_all", is_flag=True, help="Show completed ideas too")
+def queue_list(show_all: bool) -> None:
+    """List ideas in the queue."""
+    from rich.table import Table
+
+    from lloyd.orchestrator.idea_queue import IdeaQueue, IdeaStatus
+
+    q = IdeaQueue()
+    ideas = q.list_all() if show_all else q.list_pending()
+
+    if not ideas:
+        console.print("[dim]Queue is empty.[/dim]")
+        return
+
+    table = Table(title="Idea Queue")
+    table.add_column("ID", style="cyan")
+    table.add_column("Priority", justify="center")
+    table.add_column("Status", justify="center")
+    table.add_column("Description", style="white")
+
+    status_styles = {
+        IdeaStatus.PENDING: "[yellow]PENDING[/yellow]",
+        IdeaStatus.IN_PROGRESS: "[blue]RUNNING[/blue]",
+        IdeaStatus.COMPLETED: "[green]DONE[/green]",
+        IdeaStatus.FAILED: "[red]FAILED[/red]",
+        IdeaStatus.SKIPPED: "[dim]SKIPPED[/dim]",
+    }
+
+    for idea in ideas:
+        table.add_row(
+            idea.id,
+            str(idea.priority),
+            status_styles.get(idea.status, str(idea.status)),
+            idea.description[:50] + ("..." if len(idea.description) > 50 else ""),
+        )
+
+    console.print(table)
+
+    counts = q.count()
+    console.print(
+        f"\n[dim]Total: {counts['total']} | "
+        f"Pending: {counts['pending']} | "
+        f"Running: {counts['in_progress']} | "
+        f"Done: {counts['completed']} | "
+        f"Failed: {counts['failed']}[/dim]"
+    )
+
+
+@queue.command("remove")
+@click.argument("idea_id")
+def queue_remove(idea_id: str) -> None:
+    """Remove an idea from the queue."""
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    q = IdeaQueue()
+    if q.remove(idea_id):
+        console.print(f"[green]Removed:[/green] {idea_id}")
+    else:
+        console.print(f"[red]Not found:[/red] {idea_id}")
+
+
+@queue.command("clear")
+@click.option("--completed", "-c", is_flag=True, help="Clear only completed/failed ideas")
+def queue_clear(completed: bool) -> None:
+    """Clear the idea queue."""
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    q = IdeaQueue()
+    if completed:
+        removed = q.clear_completed()
+        console.print(f"[green]Cleared {removed} completed ideas.[/green]")
+    else:
+        if click.confirm("Clear ALL ideas from queue?"):
+            count = len(q.list_all())
+            for idea in q.list_all():
+                q.remove(idea.id)
+            console.print(f"[green]Cleared {count} ideas.[/green]")
+
+
+@queue.command("run")
+@click.option("--max-iterations", "-m", default=50, help="Max iterations per idea")
+@click.option("--max-parallel", "-p", default=3, help="Max parallel workers per idea")
+@click.option("--sequential", "-s", is_flag=True, help="Run stories sequentially")
+@click.option("--limit", "-n", default=0, help="Max ideas to process (0 = all)")
+@click.option("--legacy", is_flag=True, help="Use legacy crew-based execution (not TDD)")
+def queue_run(max_iterations: int, max_parallel: int, sequential: bool, limit: int, legacy: bool) -> None:
+    """Process ideas from the queue."""
+    from lloyd.orchestrator.flow import run_lloyd
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    q = IdeaQueue()
+    pending = q.list_pending()
+
+    if not pending:
+        console.print("[yellow]No pending ideas in queue.[/yellow]")
+        return
+
+    if limit > 0:
+        pending = pending[:limit]
+
+    parallel = not sequential
+    use_iterative = not legacy
+    mode_str = "sequential" if sequential else f"parallel (max {max_parallel})"
+    exec_str = "TDD iterative" if use_iterative else "legacy crew"
+    console.print(f"[bold blue]Processing {len(pending)} ideas ({mode_str}, {exec_str})...[/bold blue]")
+
+    for i, idea in enumerate(pending, 1):
+        console.print(f"\n[bold cyan]=== Idea {i}/{len(pending)}: {idea.id} ===[/bold cyan]")
+        console.print(f"[dim]{idea.description[:200]}{'...' if len(idea.description) > 200 else ''}[/dim]\n")
+
+        # Mark as in progress
+        q.start(idea.id)
+
+        try:
+            state = run_lloyd(
+                idea.description,
+                max_iterations=max_iterations,
+                max_parallel=max_parallel,
+                parallel=parallel,
+                use_iterative_executor=use_iterative,
+            )
+
+            success = state.status == "complete"
+            q.complete(
+                idea.id,
+                success=success,
+                iterations=state.iteration,
+                prd_path=".lloyd/prd.json" if success else None,
+                error=None if success else f"Status: {state.status}",
+            )
+
+            if success:
+                console.print(f"[green]Completed:[/green] {idea.id}")
+            else:
+                console.print(f"[red]Failed:[/red] {idea.id} ({state.status})")
+
+        except Exception as e:
+            q.complete(idea.id, success=False, error=str(e))
+            console.print(f"[red]Error:[/red] {idea.id} - {e}")
+
+    # Final summary
+    counts = q.count()
+    console.print(f"\n[bold]Queue Summary:[/bold]")
+    console.print(f"  Completed: {counts['completed']}")
+    console.print(f"  Failed: {counts['failed']}")
+    console.print(f"  Remaining: {counts['pending']}")
+
+
+@queue.command("view")
+@click.argument("idea_id")
+def queue_view(idea_id: str) -> None:
+    """View details of a queued idea."""
+    from lloyd.orchestrator.idea_queue import IdeaQueue
+
+    q = IdeaQueue()
+    idea = q.get(idea_id)
+
+    if not idea:
+        console.print(f"[red]Not found:[/red] {idea_id}")
+        return
+
+    console.print(f"\n[bold]ID:[/bold] {idea.id}")
+    console.print(f"[bold]Status:[/bold] {idea.status.value}")
+    console.print(f"[bold]Priority:[/bold] {idea.priority}")
+    console.print(f"[bold]Created:[/bold] {idea.created_at}")
+    if idea.started_at:
+        console.print(f"[bold]Started:[/bold] {idea.started_at}")
+    if idea.completed_at:
+        console.print(f"[bold]Completed:[/bold] {idea.completed_at}")
+    if idea.iterations:
+        console.print(f"[bold]Iterations:[/bold] {idea.iterations}")
+    if idea.prd_path:
+        console.print(f"[bold]PRD:[/bold] {idea.prd_path}")
+    if idea.error:
+        console.print(f"[bold red]Error:[/bold red] {idea.error}")
+    console.print(f"\n[bold]Description:[/bold]\n{idea.description}")
 
 
 if __name__ == "__main__":
