@@ -1,6 +1,7 @@
 """Idea Queue for batch processing multiple ideas."""
 
 import json
+import logging
 import uuid
 from datetime import UTC, datetime
 from enum import Enum
@@ -8,6 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class IdeaStatus(str, Enum):
@@ -57,10 +60,14 @@ class IdeaQueue:
         """Load queue from disk."""
         if self.queue_path.exists():
             try:
-                with open(self.queue_path) as f:
+                with open(self.queue_path, encoding="utf-8") as f:
                     data = json.load(f)
                 self._ideas = [QueuedIdea(**idea) for idea in data.get("ideas", [])]
-            except Exception:
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in idea queue {self.queue_path}: {e}")
+                self._ideas = []
+            except Exception as e:
+                logger.error(f"Error loading idea queue from {self.queue_path}: {e}")
                 self._ideas = []
         else:
             self._ideas = []
