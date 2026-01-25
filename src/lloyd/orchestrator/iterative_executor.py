@@ -338,16 +338,25 @@ ADDITIONAL REQUIREMENTS:
 4. Keep tests SIMPLE - only 3-5 basic test cases
 5. Double-check your expected values are correct before writing them
 
-CRITICAL PYTEST IMPORT RULE:
+CRITICAL IMPORT RULES:
 - If you use `pytest.raises()`, `pytest.fixture`, or any pytest.* features, you MUST add `import pytest` at the top!
-- Example:
+- If you use datetime, date, or timedelta, you MUST add `from datetime import datetime, date, timedelta` at the top!
+- If you use typing features like Optional, List, Dict, you MUST add the appropriate import!
+
+Example with all common imports:
 ```python
 import pytest
+from datetime import datetime, date, timedelta
 from {impl_module} import MyClass
 
 def test_raises_error():
     with pytest.raises(ValueError):
         MyClass().invalid_operation()
+
+def test_with_date():
+    due = datetime(2024, 12, 31)
+    result = MyClass().add_task("test", due_date=due)
+    assert result is not None
 ```
 
 TEST ONLY PUBLIC API:
