@@ -1,9 +1,25 @@
 """CLI entry point for Lloyd."""
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
+
+# Configure logging early
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.StreamHandler(sys.stderr),
+    ],
+)
+logger = logging.getLogger(__name__)
+
+# Reduce noise from third-party libraries
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("litellm").setLevel(logging.WARNING)
 
 # Fix Windows console encoding for emoji/unicode characters
 if sys.platform == "win32":
@@ -13,8 +29,10 @@ if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass  # Ignore if reconfigure not available
+    except AttributeError:
+        logger.debug("Console reconfigure not available on this Python version")
+    except Exception as e:
+        logger.warning(f"Failed to configure Windows console encoding: {e}")
 
 import click
 from rich.console import Console

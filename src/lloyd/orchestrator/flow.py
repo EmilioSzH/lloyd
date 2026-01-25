@@ -1,10 +1,14 @@
 """Main Lloyd orchestration flow."""
 
+import logging
 import os
 import sys
 import uuid
 from pathlib import Path
 from typing import Any
+
+# Configure module logger
+logger = logging.getLogger(__name__)
 
 # Fix Windows console encoding
 if sys.platform == "win32":
@@ -12,15 +16,19 @@ if sys.platform == "win32":
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
+    except AttributeError:
+        # Python versions < 3.7 don't have reconfigure
+        logger.debug("Console reconfigure not available on this Python version")
+    except Exception as e:
+        # Log the actual error for debugging
+        logger.warning(f"Failed to configure Windows console encoding: {e}")
 
 from rich.console import Console
 
 from lloyd.crews.execution import ExecutionCrew
 from lloyd.crews.planning import PlanningCrew
 from lloyd.crews.quality import QualityCrew
-from lloyd.orchestrator.iterative_executor import IterativeExecutor
+from lloyd.orchestrator.iterative_executor import IterativeExecutor, get_isolated_workspace
 from lloyd.memory.prd_manager import PRD, PRDManager, Story
 from lloyd.memory.progress import ProgressTracker
 from lloyd.orchestrator.complexity import ComplexityAssessor, TaskComplexity
@@ -68,10 +76,14 @@ class LloydFlow:
 
         # Iterative TDD executor (new approach)
         self.use_iterative_executor = use_iterative_executor
-        # Use .lloyd/output as the working directory for generated code
-        output_dir = Path(prd_path).parent / "output"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        self.iterative_executor = IterativeExecutor(working_dir=output_dir) if use_iterative_executor else None
+        # Generate a session ID for this flow instance
+        self.session_id = str(uuid.uuid4())[:8]
+        # Use isolated workspace to prevent source tree pollution
+        self.output_dir = get_isolated_workspace(self.session_id)
+        self.iterative_executor = IterativeExecutor(
+            working_dir=self.output_dir,
+            session_id=self.session_id
+        ) if use_iterative_executor else None
 
         # New components for complexity routing
         self.complexity_assessor = ComplexityAssessor()

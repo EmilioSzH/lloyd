@@ -1,5 +1,7 @@
 """Parallel story execution using ThreadPoolExecutor."""
 
+import logging
+import traceback
 import uuid
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -11,6 +13,7 @@ from lloyd.memory.prd_manager import Story
 from lloyd.orchestrator.thread_safe_state import ThreadSafeStateManager
 
 console = Console()
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -88,6 +91,7 @@ class ParallelStoryExecutor:
                     f"[yellow]Worker {worker_id}:[/yellow] "
                     f"Story '{story.title}' already claimed, skipping"
                 )
+                logger.info(f"Worker {worker_id}: Story {story.id} already claimed")
                 return StoryResult(
                     story_id=story.id,
                     story_title=story.title,
@@ -101,6 +105,7 @@ class ParallelStoryExecutor:
             console.print(
                 f"[yellow]Worker {worker_id}:[/yellow] Executing '{story.title}'"
             )
+            logger.info(f"Worker {worker_id}: Executing story {story.id}")
             execution_result = execute_fn(story)
 
             # Verify the story
@@ -118,10 +123,96 @@ class ParallelStoryExecutor:
                     f"[green]Worker {worker_id}:[/green] "
                     f"Story '{story.title}' PASSED"
                 )
+                logger.info(f"Worker {worker_id}: Story {story.id} PASSED")
             else:
                 console.print(
                     f"[red]Worker {worker_id}:[/red] "
                     f"Story '{story.title}' FAILED"
+                )
+                logger.warning(f"Worker {worker_id}: Story {story.id} FAILED")
+
+            return StoryResult(
+                story_id=story.id,
+                story_title=story.title,
+                passed=passed,
+                execution_result=execution_result,
+                worker_id=worker_id,
+            )
+
+        except Exception as e:
+            # Log full stack trace for debugging
+            error_trace = traceback.format_exc()
+            logger.error(
+                f"Worker {worker_id}: Error executing story '{story.title}' ({story.id}): {e}\n{error_trace}"
+            )
+            console.print(
+                f"[red]Worker {worker_id}:[/red] "
+                f"Error executing story '{story.title}': {e}"
+            )
+            # Release the story as failed with detailed error
+            self.state_manager.release_story(
+                story.id, False, f"Error ({type(e).__name__}): {e}"
+            )
+            return StoryResult(
+                story_id=story.id,
+                story_title=story.title,
+                passed=False,
+                execution_result=None,
+                error=f"{type(e).__name__}: {e}",
+                worker_id=worker_id,
+            )
+
+    def execute_story_atomic(
+        self,
+        execute_fn: Callable[[Story], Any],
+        verify_fn: Callable[[Story, Any], bool],
+        worker_id: str,
+    ) -> StoryResult | None:
+        """Atomically claim and execute the next ready story.
+
+        This method uses claim_next_ready_story() to avoid race conditions
+        where multiple workers try to claim the same story.
+
+        Args:
+            execute_fn: Function to execute the story implementation.
+            verify_fn: Function to verify the story passes acceptance criteria.
+            worker_id: Unique identifier for this worker.
+
+        Returns:
+            StoryResult if a story was claimed and executed, None if no stories ready.
+        """
+        # Atomically claim the next ready story
+        story = self.state_manager.claim_next_ready_story(worker_id)
+        if story is None:
+            logger.debug(f"Worker {worker_id}: No stories ready to claim")
+            return None
+
+        try:
+            console.print(
+                f"[cyan]Worker {worker_id}:[/cyan] Executing '{story.title}'"
+            )
+            logger.info(f"Worker {worker_id}: Executing atomically claimed story {story.id}")
+
+            # Execute the story
+            execution_result = execute_fn(story)
+
+            # Verify the story
+            console.print(
+                f"[yellow]Worker {worker_id}:[/yellow] Verifying '{story.title}'"
+            )
+            passed = verify_fn(story, execution_result)
+
+            # Release the story with result
+            notes = f"Executed atomically by worker {worker_id}"
+            self.state_manager.release_story(story.id, passed, notes)
+
+            if passed:
+                console.print(
+                    f"[green]Worker {worker_id}:[/green] Story '{story.title}' PASSED"
+                )
+            else:
+                console.print(
+                    f"[red]Worker {worker_id}:[/red] Story '{story.title}' FAILED"
                 )
 
             return StoryResult(
@@ -133,20 +224,22 @@ class ParallelStoryExecutor:
             )
 
         except Exception as e:
-            console.print(
-                f"[red]Worker {worker_id}:[/red] "
-                f"Error executing story '{story.title}': {e}"
+            error_trace = traceback.format_exc()
+            logger.error(
+                f"Worker {worker_id}: Error executing story {story.id}: {e}\n{error_trace}"
             )
-            # Release the story as failed
+            console.print(
+                f"[red]Worker {worker_id}:[/red] Error executing '{story.title}': {e}"
+            )
             self.state_manager.release_story(
-                story.id, False, f"Error: {e}"
+                story.id, False, f"Error ({type(e).__name__}): {e}"
             )
             return StoryResult(
                 story_id=story.id,
                 story_title=story.title,
                 passed=False,
                 execution_result=None,
-                error=str(e),
+                error=f"{type(e).__name__}: {e}",
                 worker_id=worker_id,
             )
 

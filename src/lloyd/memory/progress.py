@@ -1,11 +1,17 @@
 """Progress tracking for AEGIS."""
 
+import gzip
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
 
 class ProgressTracker:
     """Tracks and persists progress/learnings across iterations."""
+
+    # Log rotation settings
+    MAX_SIZE_BYTES = 5 * 1024 * 1024  # 5MB
+    MAX_ARCHIVES = 10
 
     def __init__(self, progress_path: str | Path = ".aegis/progress.txt") -> None:
         """Initialize progress tracker.
@@ -14,6 +20,7 @@ class ProgressTracker:
             progress_path: Path to the progress file.
         """
         self.progress_path = Path(progress_path)
+        self.archive_dir = self.progress_path.parent / "progress_archive"
 
     def read(self) -> str:
         """Read the current progress file.
@@ -33,6 +40,9 @@ class ProgressTracker:
             section: Optional section header.
         """
         self.progress_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Check for rotation before writing
+        self._check_and_rotate()
 
         timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
 
@@ -128,3 +138,97 @@ class ProgressTracker:
         """Clear the progress file (use with caution)."""
         if self.progress_path.exists():
             self.progress_path.write_text("# AEGIS Progress Log\n\n", encoding="utf-8")
+
+    def _check_and_rotate(self) -> bool:
+        """Check file size and rotate if needed.
+
+        Returns:
+            True if rotation occurred.
+        """
+        if not self.progress_path.exists():
+            return False
+
+        file_size = self.progress_path.stat().st_size
+        if file_size < self.MAX_SIZE_BYTES:
+            return False
+
+        # Perform rotation
+        self._rotate_log()
+        return True
+
+    def _rotate_log(self) -> None:
+        """Rotate the current log to archive and start fresh."""
+        # Ensure archive directory exists
+        self.archive_dir.mkdir(parents=True, exist_ok=True)
+
+        # Generate archive filename with timestamp
+        timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+        archive_name = f"progress_{timestamp}.txt.gz"
+        archive_path = self.archive_dir / archive_name
+
+        # Compress and archive current log
+        with open(self.progress_path, "rb") as f_in:
+            with gzip.open(archive_path, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+
+        # Clear current log with continuation note
+        self.progress_path.write_text(
+            f"# AEGIS Progress Log (continued)\n"
+            f"# Previous entries archived to: {archive_name}\n\n",
+            encoding="utf-8",
+        )
+
+        # Clean up old archives
+        self._cleanup_old_archives()
+
+    def _cleanup_old_archives(self) -> None:
+        """Keep only the last MAX_ARCHIVES archives."""
+        if not self.archive_dir.exists():
+            return
+
+        # Get all archive files sorted by modification time (oldest first)
+        archives = sorted(
+            self.archive_dir.glob("progress_*.txt.gz"),
+            key=lambda p: p.stat().st_mtime,
+        )
+
+        # Remove old archives beyond the limit
+        while len(archives) > self.MAX_ARCHIVES:
+            oldest = archives.pop(0)
+            oldest.unlink()
+
+    def get_archive_list(self) -> list[dict]:
+        """Get list of archived logs.
+
+        Returns:
+            List of archive info dicts with name and timestamp.
+        """
+        if not self.archive_dir.exists():
+            return []
+
+        archives = []
+        for archive in sorted(self.archive_dir.glob("progress_*.txt.gz")):
+            archives.append({
+                "name": archive.name,
+                "path": str(archive),
+                "size": archive.stat().st_size,
+                "modified": datetime.fromtimestamp(archive.stat().st_mtime, UTC),
+            })
+
+        return archives
+
+    def read_archive(self, archive_name: str) -> str:
+        """Read a specific archived log.
+
+        Args:
+            archive_name: Name of the archive file.
+
+        Returns:
+            Decompressed contents of the archive.
+        """
+        archive_path = self.archive_dir / archive_name
+        if not archive_path.exists():
+            return ""
+
+        with gzip.open(archive_path, "rt", encoding="utf-8") as f:
+            return f.read()

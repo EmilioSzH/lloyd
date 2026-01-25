@@ -60,3 +60,53 @@ npm-debug.log*
 
 # uv
 uv.lock
+
+# Lloyd test outputs (generated during idea execution)
+# These are created by Lloyd when building projects
+application/
+ar_tool/
+camera_tracking_module/
+cli_tool/
+counter_architecture.md
+directory_size_tool/
+instagram_photo_downloader.py
+instagram_photo_downloader_architecture.md
+lora_training_tool/
+main.py
+palindrome_checker.py
+project_structure.txt
+requirements.txt
+system_design.md
+ui_module/
+architecture_document.md
+architecture_document.txt
+
+# Test output directories
+tests/.lloyd/
+tests/cli/
+tests/integration/
+
+# Lloyd-generated files that shouldn't be committed
+src/__init__.py
+src/cli/
+src/counter.py
+src/main.py
+src/requirements.txt
+src/ui_module/
+
+# Coverage
+.coveragerc
+
+# Temporary test files
+test_*.py
+!tests/test_*.py
+
+# Recovery scripts (generated)
+lloyd-recovery.bat
+lloyd-recovery.sh
+
+# Install scripts (generated)
+install_dependencies.py
+
+# Null device (Windows artifact)
+NUL

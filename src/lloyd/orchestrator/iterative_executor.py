@@ -7,6 +7,7 @@ This module implements a more robust execution approach that:
 4. Integrates with ralph-loop for outer orchestration
 """
 
+import logging
 import os
 import re
 import subprocess
@@ -16,14 +17,24 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+# Configure logger
+logger = logging.getLogger(__name__)
+
+# Suppress litellm verbose logging
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("litellm").setLevel(logging.WARNING)
+logging.getLogger("litellm.litellm_core_utils").setLevel(logging.ERROR)
+
 # Fix Windows console encoding
 if sys.platform == "win32":
     os.environ.setdefault("PYTHONIOENCODING", "utf-8")
     try:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except Exception:
-        pass
+    except AttributeError:
+        logger.debug("Console reconfigure not available")
+    except Exception as e:
+        logger.warning(f"Failed to configure Windows console: {e}")
 
 from rich.console import Console
 
@@ -118,6 +129,32 @@ class ExecutionPlan:
     current_step: int = 0
 
 
+def get_isolated_workspace(session_id: str | None = None) -> Path:
+    """Get an isolated workspace directory for Lloyd outputs.
+
+    This prevents test outputs from polluting the source tree and
+    overwriting config files like pyproject.toml.
+
+    Args:
+        session_id: Optional session identifier. If not provided, generates one.
+
+    Returns:
+        Path to isolated workspace directory.
+    """
+    if session_id is None:
+        session_id = str(uuid.uuid4())[:8]
+
+    # Use user's home directory for isolation
+    home = Path.home()
+    workspace = home / ".lloyd" / "workspace" / session_id
+    workspace.mkdir(parents=True, exist_ok=True)
+
+    # Create tests subdirectory
+    (workspace / "tests").mkdir(exist_ok=True)
+
+    return workspace
+
+
 class IterativeExecutor:
     """Executor that uses TDD and iterates until tests pass."""
 
@@ -125,14 +162,20 @@ class IterativeExecutor:
         self,
         working_dir: Path | None = None,
         max_iterations_per_step: int = 5,
+        session_id: str | None = None,
     ) -> None:
         """Initialize the executor.
 
         Args:
-            working_dir: Directory to work in.
+            working_dir: Directory to work in. If None, uses isolated workspace.
             max_iterations_per_step: Max attempts per step before escalating.
+            session_id: Optional session ID for workspace isolation.
         """
-        self.working_dir = working_dir or Path.cwd()
+        # Use isolated workspace by default to prevent source tree pollution
+        if working_dir is None:
+            self.working_dir = get_isolated_workspace(session_id)
+        else:
+            self.working_dir = working_dir
         self.max_iterations = max_iterations_per_step
         self.llm = get_llm_client()
 

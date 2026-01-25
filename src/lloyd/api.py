@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import logging
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,9 @@ from lloyd.extensions.scaffold import create_extension_scaffold
 from lloyd.inbox.store import InboxStore
 from lloyd.knowledge.store import KnowledgeStore
 from lloyd.selfmod.queue import SelfModQueue
+
+# Configure logger
+logger = logging.getLogger(__name__)
 
 # Frontend path
 FRONTEND_DIR = Path(__file__).parent / "frontend" / "dist"
@@ -62,8 +66,11 @@ class ConnectionManager:
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-            except Exception:
-                pass
+            except WebSocketDisconnect:
+                # Connection was closed, will be removed in disconnect handler
+                logger.debug("WebSocket disconnected during broadcast")
+            except Exception as e:
+                logger.warning(f"Error broadcasting to WebSocket: {e}")
 
 
 manager = ConnectionManager()
@@ -106,6 +113,127 @@ class StatusResponse(BaseModel):
 class ProgressResponse(BaseModel):
     content: str
     lines: list[str]
+
+
+class HealthResponse(BaseModel):
+    status: str
+    version: str
+    checks: dict[str, dict[str, Any]]
+
+
+class DependencyStatus(BaseModel):
+    name: str
+    available: bool
+    details: str = ""
+
+
+# Health check helpers
+async def check_ollama_health() -> DependencyStatus:
+    """Check if Ollama is available."""
+    import httpx
+
+    try:
+        from lloyd.config import get_ollama_host
+
+        ollama_host = get_ollama_host()
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(f"{ollama_host}/api/tags")
+            if response.status_code == 200:
+                data = response.json()
+                model_count = len(data.get("models", []))
+                return DependencyStatus(
+                    name="ollama",
+                    available=True,
+                    details=f"{model_count} models available at {ollama_host}",
+                )
+            return DependencyStatus(
+                name="ollama",
+                available=False,
+                details=f"HTTP {response.status_code}",
+            )
+    except Exception as e:
+        return DependencyStatus(name="ollama", available=False, details=str(e))
+
+
+async def check_prd_health() -> DependencyStatus:
+    """Check if PRD file is accessible and valid."""
+    prd_path = Path(".lloyd/prd.json")
+    if not prd_path.exists():
+        return DependencyStatus(
+            name="prd", available=True, details="No PRD (ready to create)"
+        )
+    try:
+        with open(prd_path) as f:
+            prd = json.load(f)
+        story_count = len(prd.get("stories", []))
+        return DependencyStatus(
+            name="prd", available=True, details=f"{story_count} stories"
+        )
+    except json.JSONDecodeError as e:
+        return DependencyStatus(name="prd", available=False, details=f"Invalid JSON: {e}")
+    except Exception as e:
+        return DependencyStatus(name="prd", available=False, details=str(e))
+
+
+async def check_workspace_health() -> DependencyStatus:
+    """Check if workspace directories are writable."""
+    lloyd_dir = Path(".lloyd")
+    try:
+        lloyd_dir.mkdir(exist_ok=True)
+        test_file = lloyd_dir / ".health_check"
+        test_file.write_text("ok")
+        test_file.unlink()
+        return DependencyStatus(
+            name="workspace", available=True, details=str(lloyd_dir.resolve())
+        )
+    except Exception as e:
+        return DependencyStatus(name="workspace", available=False, details=str(e))
+
+
+# Health endpoints
+@app.get("/health")
+@app.get("/api/health")
+async def health_check() -> HealthResponse:
+    """Health check endpoint for monitoring.
+
+    Returns overall health status and individual dependency checks.
+    """
+    checks_results = await asyncio.gather(
+        check_ollama_health(),
+        check_prd_health(),
+        check_workspace_health(),
+    )
+
+    checks = {c.name: {"available": c.available, "details": c.details} for c in checks_results}
+    all_healthy = all(c.available for c in checks_results)
+
+    return HealthResponse(
+        status="healthy" if all_healthy else "degraded",
+        version=__version__,
+        checks=checks,
+    )
+
+
+@app.get("/api/health/ready")
+async def readiness_check() -> dict[str, Any]:
+    """Readiness probe - checks if the service can handle requests.
+
+    Returns 200 if ready, 503 if not ready.
+    """
+    workspace = await check_workspace_health()
+    if not workspace.available:
+        raise HTTPException(status_code=503, detail="Workspace not writable")
+
+    return {"ready": True, "workspace": workspace.details}
+
+
+@app.get("/api/health/live")
+async def liveness_check() -> dict[str, bool]:
+    """Liveness probe - checks if the service is running.
+
+    Always returns 200 if the server is up.
+    """
+    return {"alive": True}
 
 
 # API Routes

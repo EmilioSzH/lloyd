@@ -1,5 +1,6 @@
 """Configuration management for Lloyd."""
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,17 @@ from typing import Any
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Configure logger
+logger = logging.getLogger(__name__)
+
+# Suppress litellm verbose logging (especially the apscheduler warnings)
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("litellm").setLevel(logging.WARNING)
+logging.getLogger("litellm.litellm_core_utils").setLevel(logging.ERROR)
+
+# Also suppress httpx/httpcore noise
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 # LLM Model Configuration
 # Use Ollama with qwen2.5:32b on remote RunPod (RTX 5090 GPU)
