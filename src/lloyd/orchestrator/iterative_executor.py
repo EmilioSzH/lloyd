@@ -158,11 +158,15 @@ def get_isolated_workspace(session_id: str | None = None) -> Path:
 class IterativeExecutor:
     """Executor that uses TDD and iterates until tests pass."""
 
+    # Default test timeout in seconds
+    DEFAULT_TEST_TIMEOUT = 60
+
     def __init__(
         self,
         working_dir: Path | None = None,
         max_iterations_per_step: int = 5,
         session_id: str | None = None,
+        test_timeout: int | None = None,
     ) -> None:
         """Initialize the executor.
 
@@ -170,6 +174,7 @@ class IterativeExecutor:
             working_dir: Directory to work in. If None, uses isolated workspace.
             max_iterations_per_step: Max attempts per step before escalating.
             session_id: Optional session ID for workspace isolation.
+            test_timeout: Timeout in seconds for running tests (default: 60).
         """
         # Use isolated workspace by default to prevent source tree pollution
         if working_dir is None:
@@ -177,6 +182,7 @@ class IterativeExecutor:
         else:
             self.working_dir = working_dir
         self.max_iterations = max_iterations_per_step
+        self.test_timeout = test_timeout or self.DEFAULT_TEST_TIMEOUT
         self.llm = get_llm_client()
 
     def decompose_story(self, story: dict[str, Any]) -> ExecutionPlan:
@@ -404,18 +410,29 @@ Start with imports, then test functions. Keep it simple - 3-5 tests maximum."""
         Returns:
             Generated implementation code.
         """
+        # Build context about existing code and errors
+        existing_code_section = ""
+        if previous_attempt:
+            existing_code_section = f"""
+EXISTING CODE (you MUST preserve and extend this):
+```python
+{previous_attempt}
+```
+
+CRITICAL: Your response must include ALL the code from above PLUS the new functionality.
+Do NOT remove or replace existing methods - only ADD to them or extend them.
+"""
+
         error_context = ""
         if error_output:
             error_context = f"""
-Previous attempt failed with:
-{error_output[:1000]}
+TEST FAILURES TO FIX:
+{error_output[:1500]}
 
-Previous code:
-{previous_attempt[:1000] if previous_attempt else 'No previous attempt'}
+Analyze the error and fix only what's broken. Keep working code intact.
+"""
 
-Fix the issues and try again."""
-
-        prompt = f"""Write implementation code to pass these tests:
+        prompt = f"""Write implementation code to pass these tests.
 
 Step: {step.description}
 Implementation file: {step.impl_file}
@@ -424,31 +441,26 @@ Tests to pass:
 ```python
 {test_code}
 ```
-{error_context}
+{existing_code_section}{error_context}
+CRITICAL REQUIREMENTS:
+1. If existing code is provided above, you MUST include ALL of it in your response
+2. ADD new methods/functionality to the existing code - don't replace it
+3. Preserve all imports, class definitions, and methods from existing code
+4. Only modify what's necessary to pass the new tests
 
-Requirements:
-1. Implement ALL functionality needed to pass the tests
-2. Use proper type hints
-3. Include docstrings
-4. Handle edge cases and errors gracefully
-5. Make it ACTUALLY WORK, not just scaffold/stub code
-6. If using external libraries, use real implementations not mocks
-
-CRITICAL RULES:
+IMPLEMENTATION RULES:
 - Read the test assertions CAREFULLY - match exactly what they expect
 - If test uses `obj.method()`, implement that method
 - If test expects `ValueError`, raise `ValueError` (not a custom exception)
 - If test expects a specific return format (list, tuple, dict), match it exactly
-- When building on previous code, PRESERVE all existing methods - don't break them
-- If previous code exists, ADD to it rather than rewriting from scratch
+- Use proper type hints and docstrings
+- Make it ACTUALLY WORK, not just scaffold/stub code
 
-For complex classes with multiple methods:
-- Keep ALL previously working methods intact
-- Only add/modify what's needed for the new tests
-- Don't change method signatures that tests already depend on
-
-Return ONLY the Python implementation code, no markdown or explanation.
-Start with imports, then classes/functions."""
+OUTPUT FORMAT:
+Return ONLY the complete Python implementation code.
+No markdown code blocks, no explanation - just the Python code.
+Start with imports, then classes/functions.
+Include ALL existing code plus new additions."""
 
         response = self.llm.invoke(prompt)
         content = response.content if hasattr(response, "content") else str(response)
@@ -481,8 +493,6 @@ Start with imports, then classes/functions."""
             # Set PYTHONPATH to include the working directory so imports work
             env = os.environ.copy()
             existing_pythonpath = env.get("PYTHONPATH", "")
-            env = os.environ.copy()
-            existing_pythonpath = env.get("PYTHONPATH", "")
             if existing_pythonpath:
                 env["PYTHONPATH"] = f"{working_dir_abs}{os.pathsep}{existing_pythonpath}"
             else:
@@ -493,7 +503,7 @@ Start with imports, then classes/functions."""
                 cwd=working_dir_abs,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=self.test_timeout,
                 env=env,
             )
 
@@ -512,16 +522,17 @@ Start with imports, then classes/functions."""
             return passed, output
 
         except subprocess.TimeoutExpired:
-            return False, "Test execution timed out (60s)"
+            return False, f"Test execution timed out ({self.test_timeout}s)"
         except Exception as e:
             return False, f"Test execution error: {e}"
 
-    def execute_step(self, step: ExecutionStep, context: str = "") -> bool:
+    def execute_step(self, step: ExecutionStep, context: str = "", existing_impl: str = "") -> bool:
         """Execute a single step using TDD loop.
 
         Args:
             step: The step to execute.
-            context: Additional context.
+            context: Additional context from previous steps.
+            existing_impl: Existing implementation code to build upon.
 
         Returns:
             True if step passed, False otherwise.
@@ -529,9 +540,12 @@ Start with imports, then classes/functions."""
         step.status = "in_progress"
         console.print(f"\n[cyan]Step: {step.description}[/cyan]")
 
-        # Phase 1: Write tests
+        # Phase 1: Write tests (include context about existing implementation)
         console.print("[dim]Writing tests...[/dim]")
-        test_code = self.write_test(step, context)
+        test_context = context
+        if existing_impl:
+            test_context += f"\n\nEXISTING IMPLEMENTATION (build on this):\n```python\n{existing_impl}\n```"
+        test_code = self.write_test(step, test_context)
 
         # Save test file
         test_path = self.working_dir / step.test_file
@@ -539,14 +553,15 @@ Start with imports, then classes/functions."""
         console.print(f"[dim]Created: {step.test_file}[/dim]")
 
         # Phase 2: Iterate on implementation until tests pass
-        impl_code = ""
+        # Start with existing implementation if available
+        impl_code = existing_impl
         error_output = ""
 
         for attempt in range(1, self.max_iterations + 1):
             step.attempts = attempt
             console.print(f"[yellow]Attempt {attempt}/{self.max_iterations}[/yellow]")
 
-            # Generate implementation
+            # Generate implementation (pass existing as base to build on)
             impl_code = self.write_implementation(
                 step, test_code, error_output, impl_code
             )
@@ -599,18 +614,32 @@ Start with imports, then classes/functions."""
         failed_steps = []
 
         for step in plan.steps:
-            # Build context from previous steps
+            # Build context from previous steps (for different files)
             context = ""
+            existing_impl = ""
+
             if passed_steps > 0:
                 # Include previous implementations as context
                 for prev_step in plan.steps[:passed_steps]:
                     if prev_step.impl_file:
                         impl_path = self.working_dir / prev_step.impl_file
                         if impl_path.exists():
-                            context += f"\n# From {prev_step.impl_file}:\n"
-                            context += impl_path.read_text()[:500]
+                            prev_content = impl_path.read_text()
+                            # If same file, this IS the existing implementation to build on
+                            if prev_step.impl_file == step.impl_file:
+                                existing_impl = prev_content
+                            else:
+                                # Different file - add as context
+                                context += f"\n# From {prev_step.impl_file}:\n"
+                                context += prev_content[:1000]
 
-            success = self.execute_step(step, context)
+            # Also check if the current impl file already exists (from earlier runs)
+            if not existing_impl and step.impl_file:
+                impl_path = self.working_dir / step.impl_file
+                if impl_path.exists():
+                    existing_impl = impl_path.read_text()
+
+            success = self.execute_step(step, context, existing_impl)
 
             if success:
                 passed_steps += 1
