@@ -127,3 +127,95 @@ AEGISSettings = LloydSettings
 def get_settings() -> LloydSettings:
     """Get Lloyd settings instance."""
     return LloydSettings()
+
+
+class LLMHealthChecker:
+    """Check LLM service health and availability."""
+
+    def __init__(self, base_url: str | None = None, timeout: float = 5.0):
+        """Initialize the health checker.
+
+        Args:
+            base_url: Ollama server URL. Defaults to configured host.
+            timeout: Request timeout in seconds.
+        """
+        self.base_url = base_url or get_ollama_host()
+        self.timeout = timeout
+
+    def check_ollama_sync(self) -> tuple[bool, str]:
+        """Check if Ollama is responding (synchronous).
+
+        Returns:
+            Tuple of (available, details).
+        """
+        import httpx
+
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.get(f"{self.base_url}/api/tags")
+                if response.status_code == 200:
+                    data = response.json()
+                    models = data.get("models", [])
+                    model_names = [m.get("name", "unknown") for m in models]
+                    return True, f"{len(models)} models: {', '.join(model_names[:3])}"
+                return False, f"HTTP {response.status_code}"
+        except httpx.ConnectError:
+            return False, f"Connection refused at {self.base_url}"
+        except httpx.TimeoutException:
+            return False, f"Timeout after {self.timeout}s"
+        except Exception as e:
+            return False, str(e)
+
+    async def check_ollama_async(self) -> tuple[bool, str]:
+        """Check if Ollama is responding (asynchronous).
+
+        Returns:
+            Tuple of (available, details).
+        """
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
+                response = await client.get(f"{self.base_url}/api/tags")
+                if response.status_code == 200:
+                    data = response.json()
+                    models = data.get("models", [])
+                    model_names = [m.get("name", "unknown") for m in models]
+                    return True, f"{len(models)} models: {', '.join(model_names[:3])}"
+                return False, f"HTTP {response.status_code}"
+        except Exception as e:
+            return False, str(e)
+
+    def check_model_available(self, model_name: str) -> tuple[bool, str]:
+        """Check if a specific model is loaded.
+
+        Args:
+            model_name: Name of the model to check.
+
+        Returns:
+            Tuple of (available, details).
+        """
+        import httpx
+
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.get(f"{self.base_url}/api/tags")
+                if response.status_code == 200:
+                    models = response.json().get("models", [])
+                    for m in models:
+                        if m.get("name") == model_name:
+                            size = m.get("size", 0) / (1024 ** 3)  # Convert to GB
+                            return True, f"Model loaded ({size:.1f}GB)"
+                    return False, f"Model '{model_name}' not found"
+                return False, f"HTTP {response.status_code}"
+        except Exception as e:
+            return False, str(e)
+
+    def quick_check(self) -> bool:
+        """Quick health check - just returns True/False.
+
+        Returns:
+            True if Ollama is available, False otherwise.
+        """
+        available, _ = self.check_ollama_sync()
+        return available

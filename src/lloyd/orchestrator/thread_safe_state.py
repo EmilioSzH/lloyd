@@ -29,21 +29,28 @@ class ThreadSafeStateManager:
       `get_ready_stories()` + `claim_story()` to avoid double-booking
     """
 
-    # Lock timeout in seconds (increased for complex operations)
-    LOCK_TIMEOUT = 60
+    # Default lock timeout in seconds (increased for complex operations)
+    DEFAULT_LOCK_TIMEOUT = 60
 
     # Maximum retries for lock acquisition
     MAX_LOCK_RETRIES = 3
 
-    def __init__(self, prd_path: str | Path = ".lloyd/prd.json") -> None:
+    def __init__(
+        self,
+        prd_path: str | Path = ".lloyd/prd.json",
+        lock_timeout: float | None = None,
+    ) -> None:
         """Initialize the thread-safe state manager.
 
         Args:
             prd_path: Path to the PRD JSON file.
+            lock_timeout: Timeout in seconds for acquiring the file lock.
+                         Defaults to DEFAULT_LOCK_TIMEOUT (60 seconds).
         """
         self.prd_path = Path(prd_path)
         self.lock_path = self.prd_path.with_suffix(".lock")
-        self._lock = FileLock(str(self.lock_path), timeout=self.LOCK_TIMEOUT)
+        self.lock_timeout = lock_timeout or self.DEFAULT_LOCK_TIMEOUT
+        self._lock = FileLock(str(self.lock_path), timeout=self.lock_timeout)
 
     def _load_prd_unsafe(self) -> PRD | None:
         """Load PRD without locking (for internal use within locked context).

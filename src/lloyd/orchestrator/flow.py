@@ -1,27 +1,17 @@
 """Main Lloyd orchestration flow."""
 
 import logging
-import os
-import sys
 import uuid
 from pathlib import Path
 from typing import Any
+
+from lloyd.utils.windows import configure_console
 
 # Configure module logger
 logger = logging.getLogger(__name__)
 
 # Fix Windows console encoding
-if sys.platform == "win32":
-    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except AttributeError:
-        # Python versions < 3.7 don't have reconfigure
-        logger.debug("Console reconfigure not available on this Python version")
-    except Exception as e:
-        # Log the actual error for debugging
-        logger.warning(f"Failed to configure Windows console encoding: {e}")
+configure_console()
 
 from rich.console import Console
 

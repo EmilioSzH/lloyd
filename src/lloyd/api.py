@@ -3,14 +3,16 @@
 import asyncio
 import json
 import logging
+import secrets
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -24,6 +26,75 @@ from lloyd.selfmod.queue import SelfModQueue
 
 # Configure logger
 logger = logging.getLogger(__name__)
+
+
+# ============== Authentication ==============
+
+# Security scheme
+security = HTTPBearer(auto_error=False)
+
+# API key file location
+API_KEY_FILE = Path.home() / ".lloyd" / "api_key"
+
+
+def get_or_create_api_key() -> str:
+    """Get existing API key or create a new one.
+
+    Returns:
+        The API key string.
+    """
+    if API_KEY_FILE.exists():
+        return API_KEY_FILE.read_text().strip()
+    else:
+        key = secrets.token_urlsafe(32)
+        API_KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        API_KEY_FILE.write_text(key)
+        logger.info(f"Generated new API key, stored in {API_KEY_FILE}")
+        return key
+
+
+# Load API key at startup
+API_KEY = get_or_create_api_key()
+
+
+async def verify_token(
+    credentials: HTTPAuthorizationCredentials | None = Depends(security),
+) -> bool:
+    """Verify the Bearer token matches the API key.
+
+    Args:
+        credentials: The authorization credentials from the request.
+
+    Returns:
+        True if authentication succeeds.
+
+    Raises:
+        HTTPException: If authentication fails.
+    """
+    if credentials is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication token. Use 'Authorization: Bearer <api_key>'",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    if credentials.credentials != API_KEY:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid authentication token",
+        )
+    return True
+
+
+def verify_websocket_token(token: str | None) -> bool:
+    """Verify WebSocket token.
+
+    Args:
+        token: The token from query parameter.
+
+    Returns:
+        True if valid, False otherwise.
+    """
+    return token == API_KEY
 
 # Frontend path
 FRONTEND_DIR = Path(__file__).parent / "frontend" / "dist"
@@ -280,7 +351,7 @@ async def get_progress() -> ProgressResponse:
     return ProgressResponse(content=content, lines=content.strip().split("\n"))
 
 
-@app.post("/api/idea")
+@app.post("/api/idea", dependencies=[Depends(verify_token)])
 async def submit_idea(request: IdeaRequest) -> dict[str, Any]:
     """Submit a new product idea."""
     try:
@@ -421,7 +492,7 @@ async def run_workflow_async(flow: Any, max_iterations: int, parallel: bool = Tr
         )
 
 
-@app.post("/api/init")
+@app.post("/api/init", dependencies=[Depends(verify_token)])
 async def initialize_project() -> dict[str, str]:
     """Initialize a new Lloyd project."""
     lloyd_dir = Path(".lloyd")
@@ -457,7 +528,7 @@ async def initialize_project() -> dict[str, str]:
     return {"message": "Lloyd initialized successfully"}
 
 
-@app.post("/api/reset-story")
+@app.post("/api/reset-story", dependencies=[Depends(verify_token)])
 async def reset_story(request: StoryReset) -> dict[str, str]:
     """Reset a story's attempt count and status."""
     prd_path = Path(".lloyd/prd.json")
@@ -485,7 +556,7 @@ class ResumeRequest(BaseModel):
     sequential: bool = False
 
 
-@app.post("/api/resume")
+@app.post("/api/resume", dependencies=[Depends(verify_token)])
 async def resume_execution(request: ResumeRequest | None = None) -> dict[str, Any]:
     """Resume execution from the last checkpoint."""
     prd_path = Path(".lloyd/prd.json")
@@ -520,8 +591,18 @@ async def resume_execution(request: ResumeRequest | None = None) -> dict[str, An
 
 
 @app.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket) -> None:
-    """WebSocket endpoint for real-time updates."""
+async def websocket_endpoint(websocket: WebSocket, token: str | None = None) -> None:
+    """WebSocket endpoint for real-time updates.
+
+    Args:
+        websocket: The WebSocket connection.
+        token: Optional authentication token (query parameter).
+    """
+    # Verify token for WebSocket connections
+    if not verify_websocket_token(token):
+        await websocket.close(code=4001, reason="Authentication required")
+        return
+
     await manager.connect(websocket)
     try:
         while True:
@@ -561,7 +642,7 @@ class ResolveRequest(BaseModel):
     action: str
 
 
-@app.post("/api/inbox/{item_id}/resolve")
+@app.post("/api/inbox/{item_id}/resolve", dependencies=[Depends(verify_token)])
 async def resolve_inbox_item(item_id: str, request: ResolveRequest) -> dict[str, str]:
     """Resolve an inbox item."""
     store = InboxStore()
@@ -571,7 +652,7 @@ async def resolve_inbox_item(item_id: str, request: ResolveRequest) -> dict[str,
     return {"message": f"Resolved item {item_id} with action: {request.action}"}
 
 
-@app.delete("/api/inbox/{item_id}")
+@app.delete("/api/inbox/{item_id}", dependencies=[Depends(verify_token)])
 async def delete_inbox_item(item_id: str) -> dict[str, str]:
     """Delete an inbox item."""
     store = InboxStore()
@@ -605,7 +686,7 @@ class BrainstormRequest(BaseModel):
     idea: str
 
 
-@app.post("/api/brainstorm")
+@app.post("/api/brainstorm", dependencies=[Depends(verify_token)])
 async def create_brainstorm_session(request: BrainstormRequest) -> dict[str, Any]:
     """Create a new brainstorm session."""
     store = BrainstormStore()
@@ -619,7 +700,7 @@ class ClarificationRequest(BaseModel):
     answer: str
 
 
-@app.post("/api/brainstorm/{session_id}/clarify")
+@app.post("/api/brainstorm/{session_id}/clarify", dependencies=[Depends(verify_token)])
 async def add_clarification(session_id: str, request: ClarificationRequest) -> dict[str, Any]:
     """Add a clarification to a brainstorm session."""
     store = BrainstormStore()
@@ -631,7 +712,7 @@ async def add_clarification(session_id: str, request: ClarificationRequest) -> d
     return session.to_dict()
 
 
-@app.post("/api/brainstorm/{session_id}/approve")
+@app.post("/api/brainstorm/{session_id}/approve", dependencies=[Depends(verify_token)])
 async def approve_brainstorm_session(session_id: str) -> dict[str, str]:
     """Approve a brainstorm session spec."""
     store = BrainstormStore()
@@ -643,7 +724,7 @@ async def approve_brainstorm_session(session_id: str) -> dict[str, str]:
     return {"message": f"Approved session: {session_id}"}
 
 
-@app.delete("/api/brainstorm/{session_id}")
+@app.delete("/api/brainstorm/{session_id}", dependencies=[Depends(verify_token)])
 async def delete_brainstorm_session(session_id: str) -> dict[str, str]:
     """Delete a brainstorm session."""
     store = BrainstormStore()
@@ -675,7 +756,7 @@ async def get_knowledge_entry(entry_id: str) -> dict[str, Any]:
     return entry.to_dict()
 
 
-@app.delete("/api/knowledge/{entry_id}")
+@app.delete("/api/knowledge/{entry_id}", dependencies=[Depends(verify_token)])
 async def delete_knowledge_entry(entry_id: str) -> dict[str, str]:
     """Delete a knowledge entry."""
     store = KnowledgeStore()
@@ -725,7 +806,7 @@ async def get_selfmod_task(task_id: str) -> dict[str, Any]:
     }
 
 
-@app.post("/api/selfmod/{task_id}/approve")
+@app.post("/api/selfmod/{task_id}/approve", dependencies=[Depends(verify_token)])
 async def approve_selfmod_task(task_id: str) -> dict[str, str]:
     """Approve and merge a self-modification task."""
     from lloyd.selfmod.clone_manager import LloydCloneManager
@@ -752,7 +833,7 @@ async def approve_selfmod_task(task_id: str) -> dict[str, str]:
         raise HTTPException(status_code=500, detail="Merge failed")
 
 
-@app.post("/api/selfmod/{task_id}/reject")
+@app.post("/api/selfmod/{task_id}/reject", dependencies=[Depends(verify_token)])
 async def reject_selfmod_task(task_id: str) -> dict[str, str]:
     """Reject a self-modification task."""
     from lloyd.selfmod.clone_manager import LloydCloneManager
@@ -800,7 +881,7 @@ class CreateExtensionRequest(BaseModel):
     description: str = ""
 
 
-@app.post("/api/extensions")
+@app.post("/api/extensions", dependencies=[Depends(verify_token)])
 async def create_extension(request: CreateExtensionRequest) -> dict[str, Any]:
     """Create a new extension scaffold."""
     try:
@@ -814,7 +895,7 @@ async def create_extension(request: CreateExtensionRequest) -> dict[str, Any]:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
 
-@app.post("/api/extensions/{name}/enable")
+@app.post("/api/extensions/{name}/enable", dependencies=[Depends(verify_token)])
 async def enable_extension(name: str) -> dict[str, str]:
     """Enable an extension."""
     manager = ExtensionManager()
@@ -823,7 +904,7 @@ async def enable_extension(name: str) -> dict[str, str]:
     raise HTTPException(status_code=404, detail=f"Extension not found: {name}")
 
 
-@app.post("/api/extensions/{name}/disable")
+@app.post("/api/extensions/{name}/disable", dependencies=[Depends(verify_token)])
 async def disable_extension(name: str) -> dict[str, str]:
     """Disable an extension."""
     manager = ExtensionManager()
@@ -832,7 +913,7 @@ async def disable_extension(name: str) -> dict[str, str]:
     raise HTTPException(status_code=404, detail=f"Extension not found: {name}")
 
 
-@app.delete("/api/extensions/{name}")
+@app.delete("/api/extensions/{name}", dependencies=[Depends(verify_token)])
 async def delete_extension(name: str) -> dict[str, str]:
     """Remove an extension."""
     import shutil
@@ -878,7 +959,7 @@ async def get_queue_idea(idea_id: str) -> dict[str, Any]:
     return idea.to_dict()
 
 
-@app.post("/api/queue")
+@app.post("/api/queue", dependencies=[Depends(verify_token)])
 async def add_to_queue(request: QueueIdeaRequest) -> dict[str, Any]:
     """Add an idea to the queue."""
     from lloyd.orchestrator.idea_queue import IdeaQueue
@@ -899,7 +980,7 @@ async def add_to_queue(request: QueueIdeaRequest) -> dict[str, Any]:
     }
 
 
-@app.post("/api/queue/batch")
+@app.post("/api/queue/batch", dependencies=[Depends(verify_token)])
 async def add_batch_to_queue(request: BatchIdeaRequest) -> dict[str, Any]:
     """Add multiple ideas to the queue."""
     from lloyd.orchestrator.idea_queue import IdeaQueue
@@ -924,7 +1005,7 @@ async def add_batch_to_queue(request: BatchIdeaRequest) -> dict[str, Any]:
     }
 
 
-@app.delete("/api/queue/{idea_id}")
+@app.delete("/api/queue/{idea_id}", dependencies=[Depends(verify_token)])
 async def remove_from_queue(idea_id: str) -> dict[str, str]:
     """Remove an idea from the queue."""
     from lloyd.orchestrator.idea_queue import IdeaQueue
@@ -942,7 +1023,7 @@ async def remove_from_queue(idea_id: str) -> dict[str, str]:
     return {"message": f"Removed from queue: {idea_id}"}
 
 
-@app.post("/api/queue/clear")
+@app.post("/api/queue/clear", dependencies=[Depends(verify_token)])
 async def clear_queue(completed_only: bool = True) -> dict[str, Any]:
     """Clear completed ideas from the queue."""
     from lloyd.orchestrator.idea_queue import IdeaQueue
@@ -963,7 +1044,7 @@ async def clear_queue(completed_only: bool = True) -> dict[str, Any]:
     }
 
 
-@app.post("/api/queue/run")
+@app.post("/api/queue/run", dependencies=[Depends(verify_token)])
 async def run_queue(
     max_iterations: int = 50,
     max_parallel: int = 3,
@@ -1109,6 +1190,20 @@ def start_server() -> None:
     print(f"Starting Lloyd Server v{__version__}")
     print("API: http://localhost:8000/api")
     print("GUI: http://localhost:8000")
+    print()
+    print("=" * 50)
+    print("AUTHENTICATION")
+    print("=" * 50)
+    print(f"API Key: {API_KEY}")
+    print(f"Key file: {API_KEY_FILE}")
+    print()
+    print("Use with curl:")
+    print(f'  curl -H "Authorization: Bearer {API_KEY}" http://localhost:8000/api/status')
+    print()
+    print("WebSocket connection:")
+    print(f"  ws://localhost:8000/ws?token={API_KEY}")
+    print("=" * 50)
+    print()
 
     if not FRONTEND_DIR.exists():
         print("Warning: Frontend not built. Run 'npm run build' in src/lloyd/frontend/")

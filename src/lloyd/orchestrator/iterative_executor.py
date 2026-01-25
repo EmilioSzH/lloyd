@@ -9,13 +9,17 @@ This module implements a more robust execution approach that:
 
 import logging
 import os
-import re
 import subprocess
 import sys
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from rich.console import Console
+
+from lloyd.config import get_llm_client
+from lloyd.utils.windows import configure_console, safe_write_text, sanitize_filename
 
 # Configure logger
 logger = logging.getLogger(__name__)
@@ -26,83 +30,10 @@ logging.getLogger("litellm").setLevel(logging.WARNING)
 logging.getLogger("litellm.litellm_core_utils").setLevel(logging.ERROR)
 
 # Fix Windows console encoding
-if sys.platform == "win32":
-    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except AttributeError:
-        logger.debug("Console reconfigure not available")
-    except Exception as e:
-        logger.warning(f"Failed to configure Windows console: {e}")
-
-from rich.console import Console
-
-from lloyd.config import get_llm_client
+configure_console()
 
 # Use safe_box for Windows compatibility
 console = Console(force_terminal=True, safe_box=True)
-
-
-def sanitize_filename(filename: str) -> str:
-    """Sanitize a filename for Windows compatibility.
-
-    Args:
-        filename: The filename to sanitize.
-
-    Returns:
-        Sanitized filename safe for Windows.
-    """
-    # Remove or replace invalid Windows filename characters
-    invalid_chars = r'[<>:"/\\|?*]'
-    sanitized = re.sub(invalid_chars, "_", filename)
-
-    # Remove control characters
-    sanitized = "".join(c for c in sanitized if ord(c) >= 32)
-
-    # Ensure it doesn't start/end with spaces or dots
-    sanitized = sanitized.strip(". ")
-
-    # Handle reserved Windows names
-    reserved = {"CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4",
-                "COM5", "COM6", "COM7", "COM8", "COM9", "LPT1", "LPT2",
-                "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"}
-    name_without_ext = sanitized.split(".")[0].upper()
-    if name_without_ext in reserved:
-        sanitized = f"_{sanitized}"
-
-    return sanitized or "unnamed"
-
-
-def safe_write_text(path: Path, content: str) -> None:
-    """Write text to a file with Windows-safe encoding handling.
-
-    Args:
-        path: Path to write to.
-        content: Content to write.
-    """
-    # Ensure parent directory exists
-    path.parent.mkdir(parents=True, exist_ok=True)
-
-    # Sanitize the filename portion
-    sanitized_name = sanitize_filename(path.name)
-    safe_path = path.parent / sanitized_name
-
-    # Replace problematic characters in content
-    # Some LLM outputs contain characters that cause issues on Windows
-    safe_content = content.encode("utf-8", errors="replace").decode("utf-8")
-
-    # Write with explicit encoding and error handling
-    try:
-        with open(safe_path, "w", encoding="utf-8", errors="replace", newline="\n") as f:
-            f.write(safe_content)
-    except OSError as e:
-        # If still failing, try with even more aggressive sanitization
-        console.print(f"[yellow]File write failed ({e}), retrying with sanitization...[/yellow]")
-        # Remove any remaining problematic characters
-        safe_content = "".join(c for c in safe_content if ord(c) < 128 or ord(c) >= 160)
-        with open(safe_path, "w", encoding="utf-8", errors="ignore", newline="\n") as f:
-            f.write(safe_content)
 
 
 @dataclass

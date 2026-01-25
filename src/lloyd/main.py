@@ -2,7 +2,6 @@
 
 import json
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -22,17 +21,9 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("litellm").setLevel(logging.WARNING)
 
 # Fix Windows console encoding for emoji/unicode characters
-if sys.platform == "win32":
-    # Set UTF-8 encoding for Python I/O
-    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-    # Try to enable UTF-8 mode on Windows console
-    try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-    except AttributeError:
-        logger.debug("Console reconfigure not available on this Python version")
-    except Exception as e:
-        logger.warning(f"Failed to configure Windows console encoding: {e}")
+from lloyd.utils.windows import configure_console
+
+configure_console()
 
 import click
 from rich.console import Console
