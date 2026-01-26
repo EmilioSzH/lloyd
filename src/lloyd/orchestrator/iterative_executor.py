@@ -19,6 +19,7 @@ from typing import Any
 from rich.console import Console
 
 from lloyd.config import get_llm_client
+from lloyd.utils.import_injector import fix_file_imports
 from lloyd.utils.windows import configure_console, safe_write_text, sanitize_filename
 
 # Configure logger
@@ -429,6 +430,11 @@ Include ALL existing code plus new additions."""
         if not test_path.exists():
             return False, f"Test file not found: {test_path}"
 
+        # Fix missing imports before running tests
+        added_imports = fix_file_imports(test_path)
+        if added_imports:
+            console.print(f"[dim]Auto-injected imports: {', '.join(added_imports)}[/dim]")
+
         try:
             # Set PYTHONPATH to include the working directory so imports work
             env = os.environ.copy()
@@ -509,6 +515,11 @@ Include ALL existing code plus new additions."""
             # Save implementation
             impl_path = self.working_dir / step.impl_file
             safe_write_text(impl_path, impl_code)
+
+            # Fix missing imports in implementation
+            impl_added = fix_file_imports(impl_path)
+            if impl_added:
+                console.print(f"[dim]Auto-injected impl imports: {', '.join(impl_added)}[/dim]")
 
             # Run tests
             passed, output = self.run_tests(step.test_file)
